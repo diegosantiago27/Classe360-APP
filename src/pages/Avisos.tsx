@@ -1,0 +1,396 @@
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, Bell, Pencil, Send, Trash2 } from 'lucide-react';
+import DashboardLayout from '@/components/layout/DashboardLayout';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
+
+type AvisoNivel = 'Informativo' | 'Urgente' | 'Lembrete';
+
+interface Aviso {
+  id: string;
+  titulo: string;
+  descricao: string;
+  data: string;
+  nivel: AvisoNivel;
+}
+
+const storageKey = 'school-compass:avisos';
+const avisosLidosKey = 'school-compass:avisos-lidos';
+
+const defaultAvisos: Aviso[] = [
+  {
+    id: 'AV-001',
+    titulo: 'Reuniao de pais',
+    descricao: 'Reuniao geral na proxima segunda-feira, 19h.',
+    data: '20/01/2026',
+    nivel: 'Urgente',
+  },
+  {
+    id: 'AV-002',
+    titulo: 'Entrega de boletins',
+    descricao: 'Boletins disponiveis na secretaria e portal.',
+    data: '22/01/2026',
+    nivel: 'Informativo',
+  },
+  {
+    id: 'AV-003',
+    titulo: 'Feriado municipal',
+    descricao: 'Nao havera aula em 25/01.',
+    data: '25/01/2026',
+    nivel: 'Informativo',
+  },
+];
+
+const Avisos: React.FC = () => {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const canManage = user?.perfil !== UserProfile.ALUNO;
+  const [avisosLidos, setAvisosLidos] = useState<Record<string, string[]>>(
+    () => loadFromStorage<Record<string, string[]>>(avisosLidosKey, {}),
+  );
+  const [avisos, setAvisos] = useState<Aviso[]>(
+    () => loadFromStorage<Aviso[]>(storageKey, defaultAvisos),
+  );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [titulo, setTitulo] = useState('');
+  const [mensagem, setMensagem] = useState('');
+  const [nivel, setNivel] = useState<AvisoNivel>('Informativo');
+
+  const totalUrgentes = useMemo(
+    () => avisos.filter((aviso) => aviso.nivel === 'Urgente').length,
+    [avisos],
+  );
+
+  const resetForm = () => {
+    setTitulo('');
+    setMensagem('');
+    setNivel('Informativo');
+  };
+
+  const handleOpenCreate = () => {
+    setEditingId(null);
+    resetForm();
+    setDialogOpen(true);
+  };
+
+  const handleOpenEdit = (aviso: Aviso) => {
+    setEditingId(aviso.id);
+    setTitulo(aviso.titulo);
+    setMensagem(aviso.descricao);
+    setNivel(aviso.nivel);
+    setDialogOpen(true);
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const dataHoje = new Date().toLocaleDateString('pt-BR');
+
+    if (editingId) {
+      const updated = avisos.map((aviso) =>
+        aviso.id === editingId
+          ? { ...aviso, titulo, descricao: mensagem, nivel }
+          : aviso,
+      );
+      setAvisos(updated);
+      saveToStorage(storageKey, updated);
+    } else {
+      const novoAviso: Aviso = {
+        id: createId('aviso'),
+        titulo,
+        descricao: mensagem,
+        data: dataHoje,
+        nivel,
+      };
+      const updated = [novoAviso, ...avisos];
+      setAvisos(updated);
+      saveToStorage(storageKey, updated);
+    }
+
+    toast({
+      title: editingId ? 'Aviso atualizado' : 'Aviso enviado',
+      description: 'O aviso foi registrado e sera exibido aos usuarios.',
+    });
+    resetForm();
+    setDialogOpen(false);
+  };
+
+  const handleDelete = (aviso: Aviso) => {
+    const confirmed = window.confirm(
+      `Deseja remover o aviso "${aviso.titulo}"?`,
+    );
+    if (!confirmed) return;
+    const updated = avisos.filter((item) => item.id !== aviso.id);
+    setAvisos(updated);
+    saveToStorage(storageKey, updated);
+  };
+
+  const handleMarkAsRead = (avisoId: string) => {
+    if (!user?.id) return;
+    setAvisosLidos((prev) => {
+      const lidosUsuario = new Set(prev[user.id] ?? []);
+      if (lidosUsuario.has(avisoId)) return prev;
+      const updated = {
+        ...prev,
+        [user.id]: [...lidosUsuario, avisoId],
+      };
+      saveToStorage(avisosLidosKey, updated);
+      return updated;
+    });
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="font-display text-3xl font-bold text-foreground">
+              Avisos
+            </h1>
+            <p className="text-muted-foreground">
+              Centralize comunicados importantes para toda a comunidade escolar.
+            </p>
+          </div>
+          {canManage && (
+            <Button variant="gradient" onClick={handleOpenCreate}>
+              <Bell className="w-4 h-4" />
+              Novo aviso
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Total de avisos
+                </CardTitle>
+                <div className="text-2xl font-semibold text-foreground">
+                  {avisos.length}
+                </div>
+              </div>
+              <Bell className="w-5 h-5 text-primary" />
+            </CardHeader>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Urgentes
+                </CardTitle>
+                <div className="text-2xl font-semibold text-foreground">
+                  {totalUrgentes}
+                </div>
+              </div>
+              <AlertTriangle className="w-5 h-5 text-warning" />
+            </CardHeader>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Lembretes
+                </CardTitle>
+                <div className="text-2xl font-semibold text-foreground">
+                  {avisos.filter((aviso) => aviso.nivel === 'Lembrete').length}
+                </div>
+              </div>
+              <Bell className="w-5 h-5 text-accent" />
+            </CardHeader>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr,1fr]">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Bell className="w-5 h-5 text-primary" />
+                Avisos recentes
+              </CardTitle>
+              <CardDescription>
+                Ultimos comunicados publicados para alunos e professores.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {avisos.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  Nenhum aviso cadastrado. Clique em "Novo aviso".
+                </div>
+              ) : (
+                avisos.map((aviso) => (
+                  <div
+                    key={aviso.id}
+                    className="rounded-lg border border-border/60 p-4 transition-colors hover:bg-muted/40"
+                    onMouseEnter={() => handleMarkAsRead(aviso.id)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium text-foreground">{aviso.titulo}</h3>
+                      <Badge variant={aviso.nivel === 'Urgente' ? 'destructive' : 'secondary'}>
+                        {aviso.nivel}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">{aviso.descricao}</p>
+                    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Publicado em {aviso.data}</span>
+                      {canManage ? (
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="ghost" onClick={() => handleOpenEdit(aviso)}>
+                            <Pencil className="w-4 h-4" />
+                            Editar
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDelete(aviso)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Somente leitura para alunos.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {canManage && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <AlertTriangle className="w-5 h-5 text-warning" />
+                  {editingId ? 'Editar aviso' : 'Criar aviso'}
+                </CardTitle>
+                <CardDescription>
+                  Envie um comunicado rapido para as turmas.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="titulo">Titulo</Label>
+                    <Input
+                      id="titulo"
+                      value={titulo}
+                      onChange={(event) => setTitulo(event.target.value)}
+                      placeholder="Ex: Reuniao geral"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="nivel">Nivel</Label>
+                    <Select value={nivel} onValueChange={setNivel}>
+                      <SelectTrigger id="nivel">
+                        <SelectValue placeholder="Selecione o nivel" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Informativo">Informativo</SelectItem>
+                        <SelectItem value="Urgente">Urgente</SelectItem>
+                        <SelectItem value="Lembrete">Lembrete</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="mensagem">Mensagem</Label>
+                    <Textarea
+                      id="mensagem"
+                      value={mensagem}
+                      onChange={(event) => setMensagem(event.target.value)}
+                      placeholder="Escreva o comunicado..."
+                      rows={4}
+                      required
+                    />
+                  </div>
+                  <Button type="submit" variant="gradient" className="w-full">
+                    <Send className="w-4 h-4" />
+                    {editingId ? 'Salvar alteracoes' : 'Enviar aviso'}
+                  </Button>
+                  {editingId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setEditingId(null);
+                        resetForm();
+                      }}
+                    >
+                      Cancelar edicao
+                    </Button>
+                  )}
+                </form>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingId ? 'Editar aviso' : 'Novo aviso'}</DialogTitle>
+            <DialogDescription>
+              Preencha o titulo, nivel e a mensagem principal.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="titulo-modal">Titulo</Label>
+              <Input
+                id="titulo-modal"
+                value={titulo}
+                onChange={(event) => setTitulo(event.target.value)}
+                placeholder="Ex: Reuniao geral"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="nivel-modal">Nivel</Label>
+              <Select value={nivel} onValueChange={(value) => setNivel(value as AvisoNivel)}>
+                <SelectTrigger id="nivel-modal">
+                  <SelectValue placeholder="Selecione o nivel" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Informativo">Informativo</SelectItem>
+                  <SelectItem value="Urgente">Urgente</SelectItem>
+                  <SelectItem value="Lembrete">Lembrete</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="mensagem-modal">Mensagem</Label>
+              <Textarea
+                id="mensagem-modal"
+                value={mensagem}
+                onChange={(event) => setMensagem(event.target.value)}
+                placeholder="Escreva o comunicado..."
+                rows={4}
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="gradient">
+                {editingId ? 'Salvar' : 'Publicar aviso'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </DashboardLayout>
+  );
+};
+
+export default Avisos;
