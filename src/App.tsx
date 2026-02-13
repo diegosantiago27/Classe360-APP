@@ -247,6 +247,14 @@ const App = () => (
               }
             />
             <Route
+              path="/relatorios"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <Relatorios />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/correcoes"
               element={
                 <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
@@ -259,14 +267,6 @@ const App = () => (
               element={
                 <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
                   <CorrecoesDetalhe />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/relatorios"
-              element={
-                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
-                  <Relatorios />
                 </ProtectedRoute>
               }
             />

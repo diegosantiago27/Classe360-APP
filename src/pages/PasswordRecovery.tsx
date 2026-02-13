@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GraduationCap, Mail } from 'lucide-react';
+import { Mail } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,18 +25,15 @@ const PasswordRecovery: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="w-full max-w-lg space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-            <GraduationCap className="w-7 h-7 text-white" />
-          </div>
-          <div>
-            <h1 className="font-display font-bold text-2xl text-foreground">
-              EduGestao
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Recuperacao de senha
-            </p>
-          </div>
+        <div className="flex items-center gap-4">
+          <img
+            src="/360-08.png"
+            alt="Classe 360"
+            className="h-24 sm:h-28 w-auto max-w-full object-contain"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+            }}
+          />
         </div>
 
         <Card className="animate-fade-in">

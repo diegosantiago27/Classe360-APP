@@ -173,17 +173,26 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       <div className="flex items-center justify-between p-4 border-b border-sidebar-border">
         {!collapsed && (
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-              <GraduationCap className="w-6 h-6 text-white" />
-            </div>
-            <span className="font-display font-bold text-lg text-sidebar-foreground">
-              EduGestão
-            </span>
+            <img
+              src="/360-08.png"
+              alt="Classe 360"
+              className="h-9 w-auto object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+              }}
+            />
           </div>
         )}
         {collapsed && (
-          <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center mx-auto">
-            <GraduationCap className="w-6 h-6 text-white" />
+          <div className="w-10 h-10 rounded-xl bg-sidebar-accent flex items-center justify-center mx-auto">
+            <img
+              src="/360-08.png"
+              alt="Classe 360"
+              className="h-6 w-auto object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+              }}
+            />
           </div>
         )}
       </div>

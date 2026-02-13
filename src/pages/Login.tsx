@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { GraduationCap, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Login: React.FC = () => {
@@ -67,18 +67,15 @@ const Login: React.FC = () => {
       {/* Left Panel - Form */}
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-md animate-fade-in">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-              <GraduationCap className="w-7 h-7 text-white" />
-            </div>
-            <div>
-              <h1 className="font-display font-bold text-2xl text-foreground">
-                EduGestão
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Sistema de Gestão Escolar
-              </p>
-            </div>
+          <div className="flex items-center gap-4 mb-8">
+            <img
+              src="/360-08.png"
+              alt="Classe 360"
+              className="h-24 sm:h-28 w-auto max-w-full object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+              }}
+            />
           </div>
 
           <div className="mb-8">
