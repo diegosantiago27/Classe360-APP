@@ -8,42 +8,18 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import {
+  CatalogItem,
+  defaultDisciplinas,
+  defaultPeriodos,
+  disciplinasStorageKey,
+  periodosStorageKey,
+} from '@/lib/mockAcademics';
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
-
-interface Atividade {
-  id: string;
-  titulo: string;
-  turma: string;
-  disciplina: string;
-  periodo: string;
-  sala: string;
-  data: string;
-  horario: string;
-  instrucoes: string;
-  descricao: string;
-  entrega?: string;
-  turno?: string;
-  valeNota?: boolean;
-  pontuacaoTotal?: number;
-  peso?: number;
-  dataLiberacao?: string;
-  dataLimite?: string;
-  questoes?: Array<{
-    id: string;
-    enunciado: string;
-    tipo: 'multipla' | 'aberta';
-    pontos: number;
-    opcoes: string[];
-    corretaIndex: number | null;
-  }>;
-  status: 'Pendente' | 'Entregue';
-}
 
 interface QuestaoDraft {
   id: string;
@@ -54,9 +30,32 @@ interface QuestaoDraft {
   corretaIndex: number | null;
 }
 
-const storageKey = 'school-compass:atividades';
+interface Prova {
+  id: string;
+  titulo: string;
+  turma: string;
+  disciplina: string;
+  periodo: string;
+  data: string;
+  horario: string; // duração (hh:mm)
+  sala: string;
+  instrucoes: string;
+  status: 'Agendada' | 'Rascunho' | 'Concluida';
+  publicada: boolean;
+  questoes?: Array<{
+    id: string;
+    enunciado: string;
+    tipo: 'multipla' | 'aberta';
+    pontos: number;
+    opcoes: string[];
+    corretaIndex: number | null;
+  }>;
+  turno?: string;
+}
 
-const NovaAtividade: React.FC = () => {
+const provasStorageKey = 'school-compass:provas';
+
+const NovaProva: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -64,15 +63,11 @@ const NovaAtividade: React.FC = () => {
   const [disciplina, setDisciplina] = useState('');
   const [turma, setTurma] = useState('');
   const [turno, setTurno] = useState('');
+  const [periodo, setPeriodo] = useState('');
   const [data, setData] = useState('');
+  const [duracao, setDuracao] = useState('');
   const [titulo, setTitulo] = useState('');
   const [instrucoes, setInstrucoes] = useState('');
-
-  const [valeNota, setValeNota] = useState(true);
-  const [pontuacaoTotal, setPontuacaoTotal] = useState('10');
-  const [peso, setPeso] = useState('2');
-  const [dataLiberacao, setDataLiberacao] = useState('');
-  const [dataLimite, setDataLimite] = useState('');
 
   const [questoes, setQuestoes] = useState<QuestaoDraft[]>([
     {
@@ -87,6 +82,10 @@ const NovaAtividade: React.FC = () => {
 
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    [],
+  );
+  const periodosDisponiveis = useMemo(
+    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
     [],
   );
 
@@ -129,9 +128,8 @@ const NovaAtividade: React.FC = () => {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-
-    if (!disciplina || !turma || !data || !titulo.trim()) {
-      window.alert('Preencha disciplina, turma, data e título.');
+    if (!disciplina || !turma || !periodo || !data || !titulo.trim()) {
+      window.alert('Preencha disciplina, turma, bimestre, data e título.');
       return;
     }
 
@@ -144,51 +142,45 @@ const NovaAtividade: React.FC = () => {
       corretaIndex: questao.tipo === 'dissertativa' ? null : questao.corretaIndex,
     }));
 
-    const stored = loadFromStorage<Atividade[]>(storageKey, []);
-    const atividade: Atividade = {
-      id: createId('atividade'),
+    const stored = loadFromStorage<Prova[]>(provasStorageKey, []);
+    const prova: Prova = {
+      id: createId('prova'),
       titulo,
       turma,
       disciplina,
-      periodo: 'Periodo',
-      sala: '',
+      periodo,
       data,
-      horario: '',
+      horario: duracao,
+      sala: '',
       instrucoes,
-      descricao: instrucoes,
-      entrega: dataLimite || data,
-      turno,
-      valeNota,
-      pontuacaoTotal: Number(pontuacaoTotal),
-      peso: Number(peso),
-      dataLiberacao,
-      dataLimite,
+      status: 'Agendada',
+      publicada: false,
       questoes: questoesFormatadas,
-      status: 'Pendente',
+      turno,
     };
 
-    saveToStorage(storageKey, [atividade, ...stored]);
-    navigate('/atividades');
+    saveToStorage(provasStorageKey, [prova, ...stored]);
+    navigate('/provas');
   };
 
   return (
     <DashboardLayout>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-center gap-3">
-          <Link to="/atividades">
+          <Link to="/provas">
             <Button variant="ghost" size="icon">
               <ArrowLeft className="w-5 h-5" />
             </Button>
           </Link>
           <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">Criar Atividade / Prova</h1>
-            <p className="text-muted-foreground">Cadastre a atividade e defina as questões.</p>
+            <h1 className="font-display text-3xl font-bold text-foreground">Criar Prova</h1>
+            <p className="text-muted-foreground">Cadastre a prova e defina as questões.</p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <Card className="p-6 space-y-6">
-            <h2 className="text-sm font-semibold text-foreground">Cabeçalho da Atividade</h2>
+            <h2 className="text-sm font-semibold text-foreground">Cabeçalho da Prova</h2>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
@@ -242,11 +234,30 @@ const NovaAtividade: React.FC = () => {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Data</Label>
+                <Label>Bimestre</Label>
+                <Select value={periodo} onValueChange={setPeriodo}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o bimestre" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {periodosDisponiveis.map((item) => (
+                      <SelectItem key={item.id} value={item.nome}>
+                        {item.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Data da Prova</Label>
                 <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
+              <div className="space-y-2">
+                <Label>Horário de Duração</Label>
+                <Input type="time" value={duracao} onChange={(e) => setDuracao(e.target.value)} />
+              </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Título da Atividade / Prova</Label>
+                <Label>Título da Prova</Label>
                 <Input
                   value={titulo}
                   onChange={(e) => setTitulo(e.target.value)}
@@ -377,43 +388,13 @@ const NovaAtividade: React.FC = () => {
             ))}
           </Card>
 
-          <Card className="p-6 space-y-4">
-            <h2 className="text-sm font-semibold text-foreground">Configurações</h2>
-            <div className="flex items-center gap-3">
-              <Switch checked={valeNota} onCheckedChange={setValeNota} />
-              <span className="text-sm text-foreground">Vale nota</span>
-              <Badge variant="outline" className="text-xs">
-                Vale nota
-              </Badge>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-              <div className="space-y-2">
-                <Label>Pontuação Total</Label>
-                <Input type="number" value={pontuacaoTotal} onChange={(e) => setPontuacaoTotal(e.target.value)} disabled={!valeNota} />
-              </div>
-              <div className="space-y-2">
-                <Label>Peso</Label>
-                <Input type="number" value={peso} onChange={(e) => setPeso(e.target.value)} disabled={!valeNota} />
-              </div>
-              <div className="space-y-2">
-                <Label>Data de Liberação</Label>
-                <Input type="date" value={dataLiberacao} onChange={(e) => setDataLiberacao(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Data Limite</Label>
-                <Input type="date" value={dataLimite} onChange={(e) => setDataLimite(e.target.value)} />
-              </div>
-            </div>
-          </Card>
-
           <div className="flex flex-col gap-3 md:flex-row md:justify-end">
             <Button type="button" variant="outline">
               Salvar rascunho
             </Button>
             <Button type="submit" variant="gradient" className="gap-2">
               <Save className="w-4 h-4" />
-              Publicar atividade
+              Publicar prova
             </Button>
           </div>
         </form>
@@ -422,4 +403,4 @@ const NovaAtividade: React.FC = () => {
   );
 };
 
-export default NovaAtividade;
+export default NovaProva;

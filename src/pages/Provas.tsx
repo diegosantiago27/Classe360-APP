@@ -21,6 +21,7 @@ import {
 } from '@/lib/mockAcademics';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
+import { Link } from 'react-router-dom';
 
 type ProvaStatus = 'Agendada' | 'Rascunho' | 'Concluida';
 type QuestionType = 'multipla' | 'aberta';
@@ -425,9 +426,11 @@ const Provas: React.FC = () => {
               Organize provas, simulados e aplicacoes por turma.
             </p>
           </div>
-          <Button variant="gradient" onClick={handleOpenCreate}>
-            <FileText className="w-4 h-4" />
-            Criar prova
+          <Button variant="gradient" asChild>
+            <Link to="/provas/nova">
+              <FileText className="w-4 h-4" />
+              Criar prova
+            </Link>
           </Button>
         </div>
 

@@ -24,6 +24,7 @@ import Periodos from "./pages/Periodos";
 import Notas from "./pages/Notas";
 import Frequencia from "./pages/Frequencia";
 import Provas from "./pages/Provas";
+import NovaProva from "./pages/NovaProva";
 import Avisos from "./pages/Avisos";
 import Materiais from "./pages/Materiais";
 import MinhasMaterias from "./pages/MinhasMaterias";
@@ -35,6 +36,12 @@ import AtividadeRealizar from "./pages/AtividadeRealizar";
 import NotaTurma from "./pages/NotaTurma";
 import Perfil from "./pages/Perfil";
 import Configuracoes from "./pages/Configuracoes";
+import Correcoes from "./pages/Correcoes";
+import CorrecoesDetalhe from "./pages/CorrecoesDetalhe";
+import Agenda from "./pages/Agenda";
+import Relatorios from "./pages/Relatorios";
+import ProvasAluno from "./pages/ProvasAluno";
+import ProvaRealizar from "./pages/ProvaRealizar";
 
 const queryClient = new QueryClient();
 
@@ -193,7 +200,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
             <Route
               path="/provas"
               element={
@@ -208,7 +214,62 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
+            <Route
+              path="/provas/nova"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <NovaProva />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/provas-aluno"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.ALUNO]}>
+                  <ProvasAluno />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/provas/:id"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.ALUNO]}>
+                  <ProvaRealizar />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agenda"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <Agenda />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/correcoes"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <Correcoes />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/correcoes/detalhe"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <CorrecoesDetalhe />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/relatorios"
+              element={
+                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                  <Relatorios />
+                </ProtectedRoute>
+              }
+            />
 
             <Route
               path="/avisos"

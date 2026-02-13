@@ -492,9 +492,11 @@ const Atividades: React.FC = () => {
             </p>
           </div>
           {!isAluno && (
-            <Button variant="gradient" onClick={handleOpenCreate}>
-              <ClipboardList className="w-4 h-4" />
-              Nova atividade
+            <Button variant="gradient" asChild>
+              <Link to="/atividades/nova">
+                <ClipboardList className="w-4 h-4" />
+                Nova atividade
+              </Link>
             </Button>
           )}
         </div>

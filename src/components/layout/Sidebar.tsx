@@ -9,6 +9,7 @@ import {
   BookOpen,
   Calendar,
   FileText,
+  CheckCircle2,
   Settings,
   LogOut,
   ChevronLeft,
@@ -95,6 +96,12 @@ const navItems: NavItem[] = [
     profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
   },
   {
+    icon: Calendar,
+    label: 'Agenda',
+    path: '/agenda',
+    profiles: [UserProfile.PROFESSOR],
+  },
+  {
     icon: ClipboardList,
     label: 'Atividades',
     path: '/atividades',
@@ -105,6 +112,24 @@ const navItems: NavItem[] = [
     label: 'Provas',
     path: '/provas',
     profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
+  },
+  {
+    icon: FileText,
+    label: 'Provas',
+    path: '/provas-aluno',
+    profiles: [UserProfile.ALUNO],
+  },
+  {
+    icon: CheckCircle2,
+    label: 'Correções',
+    path: '/correcoes',
+    profiles: [UserProfile.PROFESSOR],
+  },
+  {
+    icon: FileText,
+    label: 'Relatórios',
+    path: '/relatorios',
+    profiles: [UserProfile.PROFESSOR],
   },
   {
     icon: Bell,
