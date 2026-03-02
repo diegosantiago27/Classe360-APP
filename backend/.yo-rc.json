@@ -1,0 +1,30 @@
+{
+  "generator-jhipster": {
+    "applicationType": "monolith",
+    "authenticationType": "jwt",
+    "baseName": "classe360",
+    "buildTool": "maven",
+    "cacheProvider": "no",
+    "clientFramework": "react",
+    "creationTimestamp": 1772493512352,
+    "databaseType": "sql",
+    "devDatabaseType": "postgresql",
+    "enableHibernateCache": false,
+    "enableTranslation": false,
+    "entities": [],
+    "jhiPrefix": "jhi",
+    "jhipsterVersion": "8.11.0",
+    "jwtSecretKey": "MDM3MjVkOWI0MjdlNGNjMjZiODMxZDUyOTI1ZTdhNzVhMmM3YmFiZDVlMjBiMzIxZmNlMzhmMTE5ZjA0Y2I1MWJkYjk2Mzg2NTgwOTUzZTQ1NWM3YjcwNDQ3OGRiYWU3NmNjODQ5MmRiNGI2OGZjZWQxMDlkOGM3NTJmODUxNTE=",
+    "monorepository": true,
+    "packageName": "com.classe360",
+    "prodDatabaseType": "postgresql",
+    "serverPort": "8080",
+    "serviceDiscoveryType": false,
+    "skipClient": true,
+    "skipCommitHook": true,
+    "skipUserManagement": false,
+    "testFrameworks": [],
+    "websocket": false,
+    "withAdminUi": false
+  }
+}

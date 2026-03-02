@@ -16,18 +16,18 @@ const mockUsers: User[] = [
   {
     id: '1',
     cpf: '11111111111',
-    nome: 'Maria Silva',
-    email: 'maria@escola.com',
-    perfil: UserProfile.GESTOR,
+    nome: 'Administrador',
+    email: 'admin@classe360.com',
+    perfil: UserProfile.ADMINISTRADOR,
     primeiroAcesso: false,
     createdAt: new Date().toISOString(),
   },
   {
     id: '2',
     cpf: '22222222222',
-    nome: 'João Santos',
-    email: 'joao@escola.com',
-    perfil: UserProfile.ADMINISTRADOR,
+    nome: 'Maria Silva',
+    email: 'maria@escola.com',
+    perfil: UserProfile.GESTOR,
     primeiroAcesso: false,
     createdAt: new Date().toISOString(),
   },
@@ -189,8 +189,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Mock (modo demo/offline)
     await new Promise(resolve => setTimeout(resolve, 600));
-    const user = mockUsers.find(u => u.cpf === credentials.cpf.replace(/\D/g, ''));
+    const cpfNorm = credentials.cpf.replace(/\D/g, '');
+    const user = mockUsers.find(u => u.cpf === cpfNorm);
     if (!user) return false;
+    // Admin (111.111.111-11) exige senha admin@Classe360
+    if (cpfNorm === '11111111111' && credentials.senha !== 'admin@Classe360') return false;
 
     const token = btoa(JSON.stringify({ id: user.id, exp: Date.now() + 86400000 }));
     localStorage.setItem('token', token);

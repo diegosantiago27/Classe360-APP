@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Tabela usuario (Classe360) - usuários do sistema escolar -->
+    <changeSet id="00000000000010-1" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="usuario"/>
+            </not>
+        </preConditions>
+        <createTable tableName="usuario">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="cpf" type="varchar(255)">
+                <constraints unique="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="email" type="varchar(255)">
+                <constraints unique="true" nullable="false"/>
+            </column>
+            <column name="senha" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ativo" type="boolean" valueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+        <insert tableName="usuario">
+            <column name="id" valueNumeric="1"/>
+            <column name="cpf" value="11111111111"/>
+            <column name="nome" value="Administrador"/>
+            <column name="email" value="admin@classe360.com"/>
+            <column name="senha" value="$2a$10$RsMUXQLpW91.qPCDTyNZUe7yMKCkFR/l5NXR6rt.KjkqkbucA3eNu"/>
+            <column name="role" value="ROLE_ADMIN"/>
+            <column name="ativo" valueBoolean="true"/>
+            <column name="created_at" valueComputed="CURRENT_TIMESTAMP"/>
+            <column name="updated_at" valueComputed="CURRENT_TIMESTAMP"/>
+        </insert>
+    </changeSet>
+
+    <!-- Atualiza admin existente para CPF 111.111.111-11 e senha admin@Classe360 -->
+    <changeSet id="00000000000010-1b" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="usuario"/>
+        </preConditions>
+        <update tableName="usuario">
+            <column name="cpf" value="11111111111"/>
+            <column name="senha" value="$2a$10$RsMUXQLpW91.qPCDTyNZUe7yMKCkFR/l5NXR6rt.KjkqkbucA3eNu"/>
+            <column name="updated_at" valueComputed="CURRENT_TIMESTAMP"/>
+            <where>id = 1</where>
+        </update>
+    </changeSet>
+
+    <!-- Tabela disciplina -->
+    <changeSet id="00000000000010-2" author="classe360">
+        <createTable tableName="disciplina">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="descricao" type="varchar(255)"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela periodo -->
+    <changeSet id="00000000000010-3" author="classe360">
+        <createTable tableName="periodo">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_inicio" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_fim" type="date">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela turma -->
+    <changeSet id="00000000000010-4" author="classe360">
+        <createTable tableName="turma">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="turno" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="professor_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_turma_professor" references="usuario(id)"/>
+            </column>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela turma_aluno (many-to-many) -->
+    <changeSet id="00000000000010-5" author="classe360">
+        <createTable tableName="turma_aluno">
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_turma_aluno_turma" references="turma(id)"/>
+            </column>
+            <column name="aluno_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_turma_aluno_aluno" references="usuario(id)"/>
+            </column>
+        </createTable>
+        <addPrimaryKey columnNames="turma_id, aluno_id" tableName="turma_aluno"/>
+    </changeSet>
+
+    <!-- Tabela atividade -->
+    <changeSet id="00000000000010-6" author="classe360">
+        <createTable tableName="atividade">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="titulo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="descricao" type="varchar(255)"/>
+            <column name="data_entrega" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_atividade_turma" references="turma(id)"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_atividade_disciplina" references="disciplina(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela aviso -->
+    <changeSet id="00000000000010-7" author="classe360">
+        <createTable tableName="aviso">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="titulo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="conteudo" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_criacao" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="criado_por_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_aviso_usuario" references="usuario(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela material_didatico -->
+    <changeSet id="00000000000010-8" author="classe360">
+        <createTable tableName="material_didatico">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="titulo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="descricao" type="varchar(255)"/>
+            <column name="url_arquivo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_material_disciplina" references="disciplina(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela prova -->
+    <changeSet id="00000000000010-9" author="classe360">
+        <createTable tableName="prova">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="titulo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="descricao" type="varchar(255)"/>
+            <column name="data" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ativa" type="boolean" valueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_prova_turma" references="turma(id)"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_prova_disciplina" references="disciplina(id)"/>
+            </column>
+            <column name="professor_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_prova_professor" references="usuario(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela questao -->
+    <changeSet id="00000000000010-10" author="classe360">
+        <createTable tableName="questao">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="enunciado" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tipo" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="resposta_correta" type="varchar(255)"/>
+            <column name="prova_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_questao_prova" references="prova(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela questao_alternativas -->
+    <changeSet id="00000000000010-11" author="classe360">
+        <createTable tableName="questao_alternativas">
+            <column name="questao_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_questao_alternativas" references="questao(id)"/>
+            </column>
+            <column name="alternativas" type="varchar(255)"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela entrega_atividade -->
+    <changeSet id="00000000000010-12" author="classe360">
+        <createTable tableName="entrega_atividade">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="resposta" type="varchar(255)"/>
+            <column name="corrigido" type="boolean" valueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="nota" type="float"/>
+            <column name="aluno_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_entrega_aluno" references="usuario(id)"/>
+            </column>
+            <column name="atividade_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_entrega_atividade" references="atividade(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela frequencia -->
+    <changeSet id="00000000000010-13" author="classe360">
+        <createTable tableName="frequencia">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="data" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="presente" type="boolean">
+                <constraints nullable="false"/>
+            </column>
+            <column name="aluno_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_frequencia_aluno" references="usuario(id)"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_frequencia_turma" references="turma(id)"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_frequencia_disciplina" references="disciplina(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Tabela nota -->
+    <changeSet id="00000000000010-14" author="classe360">
+        <createTable tableName="nota">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="valor" type="float">
+                <constraints nullable="false"/>
+            </column>
+            <column name="aluno_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_nota_aluno" references="usuario(id)"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_nota_turma" references="turma(id)"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_nota_disciplina" references="disciplina(id)"/>
+            </column>
+            <column name="periodo_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_nota_periodo" references="periodo(id)"/>
+            </column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

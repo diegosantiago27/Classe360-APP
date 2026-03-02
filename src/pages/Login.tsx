@@ -169,14 +169,13 @@ const Login: React.FC = () => {
           {/* Demo credentials */}
           <div className="mt-8 p-4 bg-muted rounded-lg">
             <p className="text-xs font-medium text-muted-foreground mb-2">
-              CPFs para demonstração:
+              Credenciais para demonstração:
             </p>
             <div className="text-xs text-muted-foreground space-y-1">
-              <p><span className="font-medium">Gestor:</span> 111.111.111-11</p>
-              <p><span className="font-medium">Admin:</span> 222.222.222-22</p>
-              <p><span className="font-medium">Professor:</span> 333.333.333-33</p>
-              <p><span className="font-medium">Aluno:</span> 444.444.444-44</p>
-              <p className="mt-2 italic">Qualquer senha funciona</p>
+              <p><span className="font-medium">Admin:</span> CPF 111.111.111-11 / Senha admin@Classe360</p>
+              <p><span className="font-medium">Gestor:</span> 222.222.222-22 (qualquer senha)</p>
+              <p><span className="font-medium">Professor:</span> 333.333.333-33 (qualquer senha)</p>
+              <p><span className="font-medium">Aluno:</span> 444.444.444-44 (qualquer senha)</p>
             </div>
           </div>
         </div>
