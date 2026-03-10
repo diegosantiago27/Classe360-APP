@@ -3,39 +3,36 @@ package com.classe360.domain;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
+/**
+ * Cadastro temporário - armazena solicitações pendentes de aprovação.
+ * Após o admin autorizar, os dados são transferidos para a tabela usuario (cadastro definitivo).
+ */
 @Entity
+@Table(name = "cadastro_temporario")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class Usuario {
+public class SolicitacaoCadastro {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private String cpf;
 
     @Column(nullable = false)
     private String nome;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private String email;
 
     @Column(nullable = false)
     private String senha;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Role role;
-
-    @Column(nullable = false)
-    private Boolean ativo;
 
     @Column(name = "data_nascimento")
     private String dataNascimento;
@@ -48,17 +45,27 @@ public class Usuario {
     private String cidade;
     private String cep;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private Status status = Status.PENDENTE;
+
+    @Column(name = "perfil_aprovado")
+    private String perfilAprovado;
+
+    @Column(name = "aprovado_por_id")
+    private Long aprovadoPorId;
+
+    @Column(name = "data_aprovacao")
+    private LocalDateTime dataAprovacao;
+
     @CreationTimestamp
+    @Column(name = "created_at")
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
-    private LocalDateTime updatedAt;
-
-    public enum Role {
-        ROLE_GESTOR,
-        ROLE_ADMIN,
-        ROLE_SECRETARIA,
-        ROLE_PROFESSOR,
-        ROLE_ALUNO
+    public enum Status {
+        PENDENTE,
+        APROVADO,
+        REJEITADO
     }
 }

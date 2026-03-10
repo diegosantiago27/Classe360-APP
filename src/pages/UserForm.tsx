@@ -14,6 +14,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { ArrowLeft, Save, Loader2, UserPlus } from 'lucide-react';
 import { UserProfile } from '@/types/auth';
+import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
@@ -24,14 +25,30 @@ import {
   disciplinasStorageKey,
 } from '@/lib/mockAcademics';
 
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+function roleToPerfil(role: string): UserProfile {
+  switch (role) {
+    case 'ROLE_GESTOR': return UserProfile.GESTOR;
+    case 'ROLE_ADMIN':
+    case 'ADMIN': return UserProfile.ADMINISTRADOR;
+    case 'ROLE_SECRETARIA': return UserProfile.SECRETARIA;
+    case 'ROLE_PROFESSOR': return UserProfile.PROFESSOR;
+    case 'ROLE_ALUNO':
+    default: return UserProfile.ALUNO;
+  }
+}
+
 const UserForm: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
   const editingId = searchParams.get('id');
   const isEditing = Boolean(editingId);
+  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
 
   const [formData, setFormData] = useState({
     cpf: '',
@@ -40,6 +57,8 @@ const UserForm: React.FC = () => {
     telefone: '',
     dataNascimento: '',
     perfil: '',
+    turno: '' as '' | 'Manha' | 'Tarde' | 'Noite',
+    status: 'ativo' as 'ativo' | 'inativo',
     endereco: '',
     cidade: '',
     estado: '',
@@ -64,25 +83,54 @@ const UserForm: React.FC = () => {
   );
 
   useEffect(() => {
+    if (somenteConsulta && !editingId) {
+      navigate('/usuario-listar');
+      return;
+    }
     if (!editingId) return;
-    const user = currentUsers.find((item) => item.id === editingId);
-    if (!user) return;
-    setFormData((prev) => ({
-      ...prev,
-      cpf: user.cpf ?? '',
-      nome: user.nome ?? '',
-      email: user.email ?? '',
-      telefone: user.telefone ?? '',
-      dataNascimento: user.dataNascimento ?? '',
-      perfil: String(user.perfil ?? ''),
-      endereco: user.endereco ?? '',
-      cidade: user.cidade ?? '',
-      estado: user.estado ?? '',
-      cep: user.cep ?? '',
-      materias: user.materias ?? [],
-      turmas: user.turmas ?? [],
-    }));
-  }, [editingId, currentUsers]);
+
+    const foundUser = currentUsers.find((item) => item.id === editingId);
+    if (foundUser) {
+      setFormData((prev) => ({
+        ...prev,
+        cpf: foundUser.cpf ?? '',
+        nome: foundUser.nome ?? '',
+        email: foundUser.email ?? '',
+        telefone: foundUser.telefone ?? '',
+        dataNascimento: foundUser.dataNascimento ?? '',
+        perfil: String(foundUser.perfil ?? ''),
+        turno: foundUser.turno ?? '',
+        status: foundUser.status ?? 'ativo',
+        endereco: foundUser.endereco ?? '',
+        cidade: foundUser.cidade ?? '',
+        estado: foundUser.estado ?? '',
+        cep: foundUser.cep ?? '',
+        materias: foundUser.materias ?? [],
+        turmas: foundUser.turmas ?? [],
+      }));
+      return;
+    }
+
+    if (API_URL) {
+      const token = localStorage.getItem('token');
+      fetch(`${API_URL}/api/usuarios/${editingId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { cpf?: string; nome?: string; email?: string; role?: string; ativo?: boolean } | null) => {
+          if (!data) return;
+          setFormData((prev) => ({
+            ...prev,
+            cpf: data.cpf ?? '',
+            nome: data.nome ?? '',
+            email: data.email ?? '',
+            perfil: String(roleToPerfil(data.role ?? 'ROLE_ALUNO')),
+            status: data.ativo ? 'ativo' : 'inativo',
+          }));
+        })
+        .catch(() => {});
+    }
+  }, [editingId, currentUsers, somenteConsulta, navigate]);
 
   const formatCpf = (value: string) => {
     const numbers = value.replace(/\D/g, '');
@@ -152,6 +200,7 @@ const UserForm: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (somenteConsulta) return;
 
     if (!isEditing && !validatePassword(formData.senha)) {
       toast({
@@ -181,16 +230,18 @@ const UserForm: React.FC = () => {
     const perfilNumerico = Number(formData.perfil) as UserProfile;
 
     if (isEditing && editingId) {
-      const updated = stored.map((user) =>
-        user.id === editingId
+      const updated = stored.map((u) =>
+        u.id === editingId
           ? {
-              ...user,
+              ...u,
               cpf: formData.cpf,
               nome: formData.nome,
               email: formData.email,
               telefone: formData.telefone,
               dataNascimento: formData.dataNascimento,
               perfil: perfilNumerico,
+              turno: formData.turno || undefined,
+              status: formData.status,
               endereco: formData.endereco,
               cidade: formData.cidade,
               estado: formData.estado,
@@ -198,7 +249,7 @@ const UserForm: React.FC = () => {
               materias: formData.materias,
               turmas: formData.turmas,
             }
-          : user,
+          : u,
       );
       saveToStorage(usersStorageKey, updated);
     } else {
@@ -210,6 +261,7 @@ const UserForm: React.FC = () => {
         telefone: formData.telefone,
         dataNascimento: formData.dataNascimento,
         perfil: perfilNumerico,
+        turno: formData.turno || undefined,
         endereco: formData.endereco,
         cidade: formData.cidade,
         estado: formData.estado,
@@ -245,10 +297,12 @@ const UserForm: React.FC = () => {
           <div>
             <h1 className="font-display font-bold text-3xl text-foreground flex items-center gap-3">
               <UserPlus className="w-8 h-8 text-primary" />
-              {isEditing ? 'Editar Usuário' : 'Novo Usuário'}
+              {somenteConsulta ? 'Dados do usuário' : isEditing ? 'Editar Usuário' : 'Novo Usuário'}
             </h1>
             <p className="text-muted-foreground">
-              {isEditing
+              {somenteConsulta
+                ? 'Consulta dos dados cadastrais (sem acesso à senha)'
+                : isEditing
                 ? 'Atualize os dados do usuário cadastrado'
                 : 'Preencha os dados para cadastrar um novo usuário'}
             </p>
@@ -271,6 +325,7 @@ const UserForm: React.FC = () => {
                   value={formData.cpf}
                   onChange={handleChange}
                   required
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -282,6 +337,7 @@ const UserForm: React.FC = () => {
                   value={formData.nome}
                   onChange={handleChange}
                   required
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -294,6 +350,7 @@ const UserForm: React.FC = () => {
                   value={formData.email}
                   onChange={handleChange}
                   required
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -304,6 +361,7 @@ const UserForm: React.FC = () => {
                   placeholder="(00) 00000-0000"
                   value={formData.telefone}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -314,6 +372,7 @@ const UserForm: React.FC = () => {
                   type="date"
                   value={formData.dataNascimento}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -323,6 +382,7 @@ const UserForm: React.FC = () => {
                   onValueChange={(value) =>
                     setFormData((prev) => ({ ...prev, perfil: value }))
                   }
+                  disabled={somenteConsulta}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o perfil" />
@@ -339,6 +399,45 @@ const UserForm: React.FC = () => {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="turno">Turno</Label>
+                <Select
+                  value={formData.turno}
+                  onValueChange={(value: 'Manha' | 'Tarde' | 'Noite') =>
+                    setFormData((prev) => ({ ...prev, turno: value }))
+                  }
+                  disabled={somenteConsulta}
+                >
+                  <SelectTrigger id="turno">
+                    <SelectValue placeholder="Selecione o turno" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Manha">Manhã</SelectItem>
+                    <SelectItem value="Tarde">Tarde</SelectItem>
+                    <SelectItem value="Noite">Noite</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {isEditing && (
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <Select
+                    value={formData.status}
+                    onValueChange={(value: 'ativo' | 'inativo') =>
+                      setFormData((prev) => ({ ...prev, status: value }))
+                    }
+                    disabled={somenteConsulta}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ativo">Ativo</SelectItem>
+                      <SelectItem value="inativo">Inativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -356,6 +455,7 @@ const UserForm: React.FC = () => {
                   placeholder="Rua, número, complemento"
                   value={formData.endereco}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -366,6 +466,7 @@ const UserForm: React.FC = () => {
                   placeholder="Cidade"
                   value={formData.cidade}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -376,6 +477,7 @@ const UserForm: React.FC = () => {
                   placeholder="Estado"
                   value={formData.estado}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
               <div className="space-y-2">
@@ -386,12 +488,14 @@ const UserForm: React.FC = () => {
                   placeholder="00000-000"
                   value={formData.cep}
                   onChange={handleChange}
+                  disabled={somenteConsulta}
                 />
               </div>
             </div>
           </div>
 
-          {/* Password */}
+          {/* Password - oculto para Secretaria (sem acesso à senha) */}
+          {!somenteConsulta && (
           <div className="bg-card rounded-xl p-6 border border-border/50">
             <h2 className="font-display font-semibold text-lg text-foreground mb-4">
               Senha de Acesso
@@ -428,6 +532,7 @@ const UserForm: React.FC = () => {
               </div>
             </div>
           </div>
+          )}
 
           {/* Subjects (only for teachers) */}
           {formData.perfil === String(UserProfile.PROFESSOR) && (
@@ -450,6 +555,7 @@ const UserForm: React.FC = () => {
                         id={`disciplina-${disciplina.id}`}
                         checked={formData.materias.includes(disciplina.nome)}
                         onCheckedChange={() => handleMateriaToggle(disciplina.nome)}
+                        disabled={somenteConsulta}
                       />
                       <label
                         htmlFor={`disciplina-${disciplina.id}`}
@@ -484,6 +590,7 @@ const UserForm: React.FC = () => {
                         id={`turma-${turma.id}`}
                         checked={formData.turmas.includes(turma.nome)}
                         onCheckedChange={() => handleTurmaToggle(turma.nome)}
+                        disabled={somenteConsulta}
                       />
                       <label
                         htmlFor={`turma-${turma.id}`}
@@ -502,9 +609,10 @@ const UserForm: React.FC = () => {
           <div className="flex justify-end gap-4">
             <Link to="/usuario-listar">
               <Button type="button" variant="outline">
-                Cancelar
+                {somenteConsulta ? 'Voltar' : 'Cancelar'}
               </Button>
             </Link>
+            {!somenteConsulta && (
             <Button type="submit" variant="gradient" disabled={isLoading}>
               {isLoading ? (
                 <>
@@ -518,6 +626,7 @@ const UserForm: React.FC = () => {
                 </>
               )}
             </Button>
+            )}
           </div>
         </form>
       </div>

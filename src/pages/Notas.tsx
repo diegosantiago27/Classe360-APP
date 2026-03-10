@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ClipboardList, PenLine, Pencil, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,6 +65,8 @@ const defaultLancamentos: Lancamento[] = [
 
 
 const Notas: React.FC = () => {
+  const { user } = useAuth();
+  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
   const [lancamentos, setLancamentos] = useState<Lancamento[]>(
     () => loadFromStorage<Lancamento[]>(storageKey, defaultLancamentos),
   );
@@ -189,10 +193,12 @@ const Notas: React.FC = () => {
               Controle os lancamentos por turma e acompanhe pendencias.
             </p>
           </div>
+          {!somenteConsulta && (
           <Button variant="gradient" onClick={handleOpenCreate}>
             <PenLine className="w-4 h-4" />
             Novo lancamento
           </Button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -294,7 +300,9 @@ const Notas: React.FC = () => {
                     <TableHead>Bimestre</TableHead>
                     <TableHead>Pendentes</TableHead>
                     <TableHead>Status</TableHead>
+                    {!somenteConsulta && (
                     <TableHead className="text-right">Acoes</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -315,6 +323,7 @@ const Notas: React.FC = () => {
                           {item.status}
                         </Badge>
                       </TableCell>
+                      {!somenteConsulta && (
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button variant="outline" size="sm" onClick={() => handleOpenEdit(item)}>
@@ -326,6 +335,7 @@ const Notas: React.FC = () => {
                           </Button>
                         </div>
                       </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

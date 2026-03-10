@@ -184,6 +184,46 @@ const Dashboard: React.FC = () => {
       );
     }
 
+    if (user?.perfil === UserProfile.SECRETARIA) {
+      cards.push(
+        {
+          icon: Users,
+          title: 'Usuários',
+          description: 'Consultar dados cadastrais de alunos e professores',
+          to: '/usuario-listar',
+          variant: 'admin' as const,
+        },
+        {
+          icon: BookOpen,
+          title: 'Turmas',
+          description: 'Consultar turmas',
+          to: '/turmas',
+          variant: 'professor' as const,
+        },
+        {
+          icon: Calendar,
+          title: 'Períodos',
+          description: 'Consultar períodos',
+          to: '/periodos',
+          variant: 'primary' as const,
+        },
+        {
+          icon: ClipboardList,
+          title: 'Notas',
+          description: 'Consultar notas dos alunos',
+          to: '/notas',
+          variant: 'primary' as const,
+        },
+        {
+          icon: Calendar,
+          title: 'Frequência',
+          description: 'Consultar frequência dos alunos',
+          to: '/frequencia',
+          variant: 'primary' as const,
+        }
+      );
+    }
+
     if (
       user?.perfil === UserProfile.GESTOR ||
       user?.perfil === UserProfile.ADMINISTRADOR ||

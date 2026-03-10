@@ -3,6 +3,7 @@ export enum UserProfile {
   ADMINISTRADOR = 2,
   PROFESSOR = 3,
   ALUNO = 4,
+  SECRETARIA = 5,
 }
 
 export interface User {
@@ -13,8 +14,13 @@ export interface User {
   perfil: UserProfile;
   primeiroAcesso: boolean;
   telefone?: string;
-  endereco?: string;
   dataNascimento?: string;
+  rua?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  cep?: string;
   turmaId?: string;
   materias?: string[];
   createdAt: string;
@@ -37,6 +43,14 @@ export interface RegisterData {
   nome: string;
   email: string;
   senha: string;
+  dataNascimento?: string;
+  telefone?: string;
+  rua?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  cep?: string;
 }
 
 export const getProfileLabel = (perfil: UserProfile): string => {
@@ -49,6 +63,8 @@ export const getProfileLabel = (perfil: UserProfile): string => {
       return 'Professor';
     case UserProfile.ALUNO:
       return 'Aluno';
+    case UserProfile.SECRETARIA:
+      return 'Secretaria';
     default:
       return 'Usuário';
   }
@@ -64,6 +80,8 @@ export const getProfileColor = (perfil: UserProfile): string => {
       return 'professor';
     case UserProfile.ALUNO:
       return 'aluno';
+    case UserProfile.SECRETARIA:
+      return 'gestor';
     default:
       return 'primary';
   }

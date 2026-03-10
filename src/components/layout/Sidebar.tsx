@@ -5,6 +5,7 @@ import { UserProfile, getProfileLabel } from '@/types/auth';
 import {
   Home,
   Users,
+  UserPlus,
   GraduationCap,
   BookOpen,
   Calendar,
@@ -18,6 +19,7 @@ import {
   ClipboardList,
   Bell,
   UserCircle,
+  Building2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -39,7 +41,7 @@ const navItems: NavItem[] = [
     icon: Home,
     label: 'Início',
     path: '/index',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.ALUNO],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.ALUNO, UserProfile.SECRETARIA],
   },
   {
     icon: LayoutDashboard,
@@ -57,13 +59,19 @@ const navItems: NavItem[] = [
     icon: Users,
     label: 'Usuários',
     path: '/usuario-listar',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA],
+  },
+  {
+    icon: UserPlus,
+    label: 'Solicitações de Cadastro',
+    path: '/solicitacoes-cadastro',
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA],
   },
   {
     icon: BookOpen,
     label: 'Turmas',
     path: '/turmas',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.SECRETARIA],
   },
   {
     icon: BookOpen,
@@ -81,19 +89,19 @@ const navItems: NavItem[] = [
     icon: Calendar,
     label: 'Períodos',
     path: '/periodos',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA],
   },
   {
     icon: ClipboardList,
     label: 'Notas',
     path: '/notas',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.SECRETARIA],
   },
   {
     icon: Calendar,
     label: 'Frequência',
     path: '/frequencia',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.SECRETARIA],
   },
   {
     icon: Calendar,
@@ -135,7 +143,7 @@ const navItems: NavItem[] = [
     icon: Bell,
     label: 'Avisos',
     path: '/avisos',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.ALUNO],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.ALUNO, UserProfile.SECRETARIA],
   },
 ];
 
@@ -157,6 +165,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
         return 'bg-professor';
       case UserProfile.ALUNO:
         return 'bg-aluno';
+      case UserProfile.SECRETARIA:
+        return 'bg-gestor';
       default:
         return 'bg-primary';
     }
@@ -262,6 +272,16 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
 
       {/* Footer */}
       <div className="p-3 border-t border-sidebar-border space-y-1">
+        <Link
+          to="/dados-instituicao"
+          className={cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200',
+            'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground'
+          )}
+        >
+          <Building2 className="w-5 h-5 flex-shrink-0" />
+          {!collapsed && <span className="text-sm font-medium">Dados da Instituição</span>}
+        </Link>
         <Link
           to="/perfil"
           className={cn(

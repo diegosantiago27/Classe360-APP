@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpen, Calendar, GraduationCap, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +15,8 @@ import { loadFromStorage, saveToStorage, createId } from '@/lib/mockStorage';
 import { Turma, turmasStorageKey, defaultTurmas } from '@/lib/mockTurmas';
 
 const Turmas: React.FC = () => {
+  const { user } = useAuth();
+  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
   const [turmas, setTurmas] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
   );
@@ -108,10 +112,12 @@ const Turmas: React.FC = () => {
               Acompanhe a distribuicao de turmas, professores e alunos.
             </p>
           </div>
+          {!somenteConsulta && (
           <Button variant="gradient" onClick={handleOpenCreate}>
             <Plus className="w-4 h-4" />
             Nova turma
           </Button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -181,7 +187,9 @@ const Turmas: React.FC = () => {
                     <TableHead>Alunos</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Proxima aula</TableHead>
+                    {!somenteConsulta && (
                     <TableHead className="text-right">Acoes</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -199,6 +207,7 @@ const Turmas: React.FC = () => {
                         </Badge>
                       </TableCell>
                       <TableCell>{turma.proximaAula}</TableCell>
+                      {!somenteConsulta && (
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button
@@ -218,6 +227,7 @@ const Turmas: React.FC = () => {
                           </Button>
                         </div>
                       </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

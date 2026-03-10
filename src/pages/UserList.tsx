@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/select';
 import {
   Search,
-  Plus,
   Edit,
   Trash2,
   ChevronLeft,
@@ -28,19 +27,84 @@ import {
   Filter,
 } from 'lucide-react';
 import { UserProfile, getProfileLabel, getProfileColor } from '@/types/auth';
+import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { defaultUsers, usersStorageKey, StoredUser } from '@/lib/mockUsers';
+import { Loader2 } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+function roleToPerfil(role: string): UserProfile {
+  switch (role) {
+    case 'ROLE_GESTOR':
+      return UserProfile.GESTOR;
+    case 'ROLE_ADMIN':
+    case 'ADMIN':
+      return UserProfile.ADMINISTRADOR;
+    case 'ROLE_SECRETARIA':
+      return UserProfile.SECRETARIA;
+    case 'ROLE_PROFESSOR':
+      return UserProfile.PROFESSOR;
+    case 'ROLE_ALUNO':
+    default:
+      return UserProfile.ALUNO;
+  }
+}
+
+interface UsuarioApi {
+  id: number;
+  cpf: string;
+  nome: string;
+  email: string;
+  role: string;
+  ativo: boolean;
+}
 
 const UserList: React.FC = () => {
+  const { user } = useAuth();
+  const podeDeletar = user?.perfil !== UserProfile.GESTOR && user?.perfil !== UserProfile.SECRETARIA;
   const [users, setUsers] = useState<StoredUser[]>(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
   );
+  const [loading, setLoading] = useState(!!API_URL);
   const [searchTerm, setSearchTerm] = useState('');
   const [profileFilter, setProfileFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  useEffect(() => {
+    if (!API_URL) return;
+    let cancelled = false;
+    setLoading(true);
+    const token = localStorage.getItem('token');
+    fetch(`${API_URL}/api/usuarios?size=500`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        const content = (data.content ?? data) as UsuarioApi[];
+        const mapped: StoredUser[] = content.map((u) => ({
+          id: String(u.id),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
+          turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
+          status: u.ativo ? 'ativo' : 'inativo',
+        }));
+        setUsers(mapped);
+      })
+      .catch(() => !cancelled && setUsers([]))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [API_URL]);
 
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {
@@ -77,12 +141,27 @@ const UserList: React.FC = () => {
     return `profile-${color}`;
   };
 
-  const handleDelete = (user: StoredUser) => {
+  const handleDelete = async (userToDelete: StoredUser) => {
     const confirmed = window.confirm(
-      `Deseja remover o usuário ${user.nome}?`,
+      `Deseja remover o usuário ${userToDelete.nome}?`,
     );
     if (!confirmed) return;
-    const updated = users.filter((item) => item.id !== user.id);
+    if (API_URL) {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/usuarios/${userToDelete.id}`, {
+          method: 'DELETE',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
+        }
+      } catch {
+        // erro silencioso
+      }
+      return;
+    }
+    const updated = users.filter((item) => item.id !== userToDelete.id);
     setUsers(updated);
     saveToStorage(usersStorageKey, updated);
   };
@@ -91,22 +170,14 @@ const UserList: React.FC = () => {
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="font-display font-bold text-3xl text-foreground mb-2 flex items-center gap-3">
-              <Users className="w-8 h-8 text-primary" />
-              Usuários
-            </h1>
-            <p className="text-muted-foreground">
-              Gerencie os usuários do sistema escolar
-            </p>
-          </div>
-          <Link to="/usuario-criar-novo">
-            <Button variant="gradient">
-              <Plus className="w-4 h-4 mr-2" />
-              Novo Usuário
-            </Button>
-          </Link>
+        <div>
+          <h1 className="font-display font-bold text-3xl text-foreground mb-2 flex items-center gap-3">
+            <Users className="w-8 h-8 text-primary" />
+            Usuários
+          </h1>
+          <p className="text-muted-foreground">
+            Gerencie os usuários do sistema escolar
+          </p>
         </div>
 
         {/* Filters */}
@@ -141,6 +212,11 @@ const UserList: React.FC = () => {
 
         {/* Table */}
         <div className="bg-card rounded-xl border border-border/50 overflow-hidden">
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
@@ -148,6 +224,7 @@ const UserList: React.FC = () => {
                 <TableHead>Email</TableHead>
                 <TableHead>CPF</TableHead>
                 <TableHead>Perfil</TableHead>
+                <TableHead>Turno</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
@@ -155,7 +232,7 @@ const UserList: React.FC = () => {
             <TableBody>
               {paginatedUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">
+                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">
                     Nenhum usuário encontrado.
                   </TableCell>
                 </TableRow>
@@ -176,6 +253,9 @@ const UserList: React.FC = () => {
                       </span>
                     </TableCell>
                     <TableCell>
+                      {user.turno === 'Manha' ? 'Manhã' : user.turno === 'Tarde' ? 'Tarde' : user.turno === 'Noite' ? 'Noite' : '-'}
+                    </TableCell>
+                    <TableCell>
                       <span
                         className={cn(
                           'px-2 py-1 rounded-full text-xs font-medium',
@@ -194,14 +274,16 @@ const UserList: React.FC = () => {
                             <Edit className="w-4 h-4" />
                           </Button>
                         </Link>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(user)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {podeDeletar && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => handleDelete(user)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -209,8 +291,10 @@ const UserList: React.FC = () => {
               )}
             </TableBody>
           </Table>
+          )}
 
           {/* Pagination */}
+          {!loading && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-sm text-muted-foreground">
               {filteredUsers.length === 0
@@ -252,6 +336,7 @@ const UserList: React.FC = () => {
               </Button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

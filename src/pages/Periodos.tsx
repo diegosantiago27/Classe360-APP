@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Calendar, Pencil, Plus, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -10,6 +12,8 @@ import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { CatalogItem, defaultPeriodos, periodosStorageKey } from '@/lib/mockAcademics';
 
 const Periodos: React.FC = () => {
+  const { user } = useAuth();
+  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
   const [periodos, setPeriodos] = useState<CatalogItem[]>(
     () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
   );
@@ -71,10 +75,12 @@ const Periodos: React.FC = () => {
               Cadastre os periodos usados para provas e notas.
             </p>
           </div>
+          {!somenteConsulta && (
           <Button variant="gradient" onClick={handleOpenCreate}>
             <Plus className="w-4 h-4" />
             Novo periodo
           </Button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -105,13 +111,17 @@ const Periodos: React.FC = () => {
                   <CardTitle className="text-lg">{item.nome}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => handleOpenEdit(item)}>
-                    <Pencil className="w-4 h-4" />
-                    Editar
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => handleDelete(item)}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {!somenteConsulta && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => handleOpenEdit(item)}>
+                      <Pencil className="w-4 h-4" />
+                      Editar
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => handleDelete(item)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </>
+                  )}
                 </CardContent>
               </Card>
             ))}

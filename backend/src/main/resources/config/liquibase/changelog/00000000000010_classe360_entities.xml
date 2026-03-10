@@ -6,6 +6,8 @@
 
     <!-- Tabela usuario (Classe360) - usuários do sistema escolar -->
     <changeSet id="00000000000010-1" author="classe360">
+        <validCheckSum>9:89e6be5c8ab6ad11efac24953fcfe470</validCheckSum>
+        <validCheckSum>9:b12c88ef8eae87e0c7fac140bdd57263</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <not>
                 <tableExists tableName="usuario"/>
@@ -47,6 +49,15 @@
             <column name="created_at" valueComputed="CURRENT_TIMESTAMP"/>
             <column name="updated_at" valueComputed="CURRENT_TIMESTAMP"/>
         </insert>
+        <sql>SELECT setval(pg_get_serial_sequence('usuario', 'id'), COALESCE((SELECT MAX(id) FROM usuario), 1))</sql>
+    </changeSet>
+
+    <!-- Sincroniza sequência usuario_id_seq com o maior id existente (evita conflito ao aprovar cadastros) -->
+    <changeSet id="00000000000010-1a" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="usuario"/>
+        </preConditions>
+        <sql>SELECT setval(pg_get_serial_sequence('usuario', 'id'), COALESCE((SELECT MAX(id) FROM usuario), 1))</sql>
     </changeSet>
 
     <!-- Atualiza admin existente para CPF 111.111.111-11 e senha admin@Classe360 -->

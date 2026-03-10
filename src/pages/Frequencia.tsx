@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { CalendarCheck, Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -37,6 +39,8 @@ const defaultAlunos: AlunoTurma[] = [
 const disciplinasDisponiveis = ['Matemática', 'Português', 'Física', 'História'];
 
 const Frequencia: React.FC = () => {
+  const { user } = useAuth();
+  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
   const [presencas, setPresencas] = useState<RegistroPresenca[]>(() =>
     loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
   );
@@ -160,10 +164,12 @@ const Frequencia: React.FC = () => {
             <h1 className="font-display text-3xl font-bold text-foreground">Frequência</h1>
             <p className="text-muted-foreground">Registro de presença por aula</p>
           </div>
+          {!somenteConsulta && (
           <Button variant="gradient" className="gap-2">
             <CalendarCheck className="w-4 h-4" />
             Salvar Chamada
           </Button>
+          )}
         </div>
 
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
@@ -219,6 +225,7 @@ const Frequencia: React.FC = () => {
           </Card>
         </div>
 
+        {!somenteConsulta && (
         <div className="flex flex-wrap gap-3">
           <Button
             variant="outline"
@@ -237,6 +244,7 @@ const Frequencia: React.FC = () => {
             Todos Ausentes
           </Button>
         </div>
+        )}
 
         <Card className="divide-y divide-border/60">
           {alunosDaTurma.map((aluno, index) => {
@@ -258,28 +266,39 @@ const Frequencia: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      'gap-2 border-success/40 text-success hover:bg-success/10',
-                      status === 'Presente' && 'bg-success/10',
-                    )}
-                    onClick={() => handleSetStatus(aluno, 'Presente')}
-                  >
-                    <Check className="w-4 h-4" />
-                    Presente
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      'gap-2 border-destructive/40 text-destructive hover:bg-destructive/10',
-                      status === 'Falta' && 'bg-destructive/10',
-                    )}
-                    onClick={() => handleSetStatus(aluno, 'Falta')}
-                  >
-                    <X className="w-4 h-4" />
-                    Ausente
-                  </Button>
+                  {somenteConsulta ? (
+                    <span className={cn(
+                      'px-3 py-1.5 rounded-lg text-sm font-medium',
+                      status === 'Presente' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive',
+                    )}>
+                      {status ?? '—'}
+                    </span>
+                  ) : (
+                    <>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          'gap-2 border-success/40 text-success hover:bg-success/10',
+                          status === 'Presente' && 'bg-success/10',
+                        )}
+                        onClick={() => handleSetStatus(aluno, 'Presente')}
+                      >
+                        <Check className="w-4 h-4" />
+                        Presente
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          'gap-2 border-destructive/40 text-destructive hover:bg-destructive/10',
+                          status === 'Falta' && 'bg-destructive/10',
+                        )}
+                        onClick={() => handleSetStatus(aluno, 'Falta')}
+                      >
+                        <X className="w-4 h-4" />
+                        Ausente
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             );

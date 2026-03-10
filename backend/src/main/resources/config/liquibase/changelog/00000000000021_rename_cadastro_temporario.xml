@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Renomeia solicitacao_cadastro para cadastro_temporario (se existir) -->
+    <changeSet id="00000000000021-1" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="solicitacao_cadastro"/>
+        </preConditions>
+        <renameTable oldTableName="solicitacao_cadastro" newTableName="cadastro_temporario"/>
+    </changeSet>
+
+    <!-- Cria cadastro_temporario se não existir (instalação nova) -->
+    <changeSet id="00000000000021-2" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="cadastro_temporario"/>
+            </not>
+        </preConditions>
+        <createTable tableName="cadastro_temporario">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="cpf" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="email" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="senha" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_nascimento" type="varchar(50)"/>
+            <column name="telefone" type="varchar(50)"/>
+            <column name="rua" type="varchar(255)"/>
+            <column name="numero" type="varchar(50)"/>
+            <column name="complemento" type="varchar(255)"/>
+            <column name="bairro" type="varchar(255)"/>
+            <column name="cidade" type="varchar(255)"/>
+            <column name="cep" type="varchar(20)"/>
+            <column name="status" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="perfil_aprovado" type="varchar(50)"/>
+            <column name="aprovado_por_id" type="bigint"/>
+            <column name="data_aprovacao" type="timestamp"/>
+            <column name="created_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

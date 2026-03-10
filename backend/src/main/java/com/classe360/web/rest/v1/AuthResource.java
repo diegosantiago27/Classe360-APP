@@ -6,10 +6,12 @@ import static com.classe360.security.SecurityUtils.USER_ID_CLAIM;
 
 import com.classe360.domain.Usuario;
 import com.classe360.repository.UsuarioRepository;
+import com.classe360.service.UsuarioService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +37,7 @@ public class AuthResource {
     private static final Logger LOG = LoggerFactory.getLogger(AuthResource.class);
 
     private final UsuarioRepository usuarioRepository;
+    private final UsuarioService usuarioService;
     private final PasswordEncoder passwordEncoder;
     private final JwtEncoder jwtEncoder;
 
@@ -43,10 +46,12 @@ public class AuthResource {
 
     public AuthResource(
         UsuarioRepository usuarioRepository,
+        UsuarioService usuarioService,
         PasswordEncoder passwordEncoder,
         JwtEncoder jwtEncoder
     ) {
         this.usuarioRepository = usuarioRepository;
+        this.usuarioService = usuarioService;
         this.passwordEncoder = passwordEncoder;
         this.jwtEncoder = jwtEncoder;
     }
@@ -72,6 +77,60 @@ public class AuthResource {
         Map<String, Object> user = toUserMap(usuario);
 
         return ResponseEntity.ok(Map.of("token", jwt, "user", user));
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<Void> changePassword(
+        Authentication authentication,
+        @Valid @RequestBody ChangePasswordRequest request
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long userId = null;
+        if (authentication.getPrincipal() instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
+            userId = jwt.getClaim(USER_ID_CLAIM);
+        }
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        usuarioService.changePassword(userId, request.senhaAtual(), request.novaSenha());
+        return ResponseEntity.ok().build();
+    }
+
+    @PatchMapping("/me")
+    public ResponseEntity<Map<String, Object>> updateProfile(
+        Authentication authentication,
+        @Valid @RequestBody UpdateProfileRequest request
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long userId = null;
+        if (authentication.getPrincipal() instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
+            userId = jwt.getClaim(USER_ID_CLAIM);
+        }
+        if (userId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Usuario usuario = usuarioService.updateProfile(
+            userId,
+            request.nome(),
+            request.email(),
+            request.dataNascimento(),
+            request.telefone(),
+            request.rua(),
+            request.numero(),
+            request.complemento(),
+            request.bairro(),
+            request.cidade(),
+            request.cep()
+        );
+        return ResponseEntity.ok(Map.of("user", toUserMap(usuario)));
     }
 
     @GetMapping("/me")
@@ -116,19 +175,43 @@ public class AuthResource {
         int perfil = switch (u.getRole()) {
             case ROLE_GESTOR -> 1;
             case ROLE_ADMIN -> 2;
+            case ROLE_SECRETARIA -> 5;
             case ROLE_PROFESSOR -> 3;
             case ROLE_ALUNO -> 4;
         };
-        return Map.of(
-            "id", String.valueOf(u.getId()),
-            "cpf", u.getCpf(),
-            "nome", u.getNome(),
-            "email", u.getEmail(),
-            "perfil", perfil,
-            "primeiroAcesso", false,
-            "createdAt", u.getCreatedAt() != null ? u.getCreatedAt().toString() : ""
-        );
+        Map<String, Object> m = new HashMap<>();
+        m.put("id", String.valueOf(u.getId()));
+        m.put("cpf", u.getCpf());
+        m.put("nome", u.getNome());
+        m.put("email", u.getEmail());
+        m.put("perfil", perfil);
+        m.put("primeiroAcesso", false);
+        m.put("createdAt", u.getCreatedAt() != null ? u.getCreatedAt().toString() : "");
+        m.put("dataNascimento", u.getDataNascimento() != null ? u.getDataNascimento() : "");
+        m.put("telefone", u.getTelefone() != null ? u.getTelefone() : "");
+        m.put("rua", u.getRua() != null ? u.getRua() : "");
+        m.put("numero", u.getNumero() != null ? u.getNumero() : "");
+        m.put("complemento", u.getComplemento() != null ? u.getComplemento() : "");
+        m.put("bairro", u.getBairro() != null ? u.getBairro() : "");
+        m.put("cidade", u.getCidade() != null ? u.getCidade() : "");
+        m.put("cep", u.getCep() != null ? u.getCep() : "");
+        return m;
     }
 
     public record LoginRequest(@NotBlank String cpf, @NotBlank String senha) {}
+
+    public record ChangePasswordRequest(@NotBlank String senhaAtual, @NotBlank String novaSenha) {}
+
+    public record UpdateProfileRequest(
+        String nome,
+        String email,
+        String dataNascimento,
+        String telefone,
+        String rua,
+        String numero,
+        String complemento,
+        String bairro,
+        String cidade,
+        String cep
+    ) {}
 }

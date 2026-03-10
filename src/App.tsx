@@ -36,6 +36,8 @@ import AtividadeRealizar from "./pages/AtividadeRealizar";
 import NotaTurma from "./pages/NotaTurma";
 import Perfil from "./pages/Perfil";
 import Configuracoes from "./pages/Configuracoes";
+import DadosInstituicao from "./pages/DadosInstituicao";
+import SolicitacoesCadastro from "./pages/SolicitacoesCadastro";
 import Correcoes from "./pages/Correcoes";
 import CorrecoesDetalhe from "./pages/CorrecoesDetalhe";
 import Agenda from "./pages/Agenda";
@@ -102,7 +104,7 @@ const App = () => (
               path="/usuario-listar"
               element={
                 <ProtectedRoute
-                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR]}
+                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA]}
                 >
                   <UserList />
                 </ProtectedRoute>
@@ -113,9 +115,24 @@ const App = () => (
               path="/usuario-criar-novo"
               element={
                 <ProtectedRoute
-                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR]}
+                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA]}
                 >
                   <UserForm />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/solicitacoes-cadastro"
+              element={
+                <ProtectedRoute
+                  allowedProfiles={[
+                    UserProfile.GESTOR,
+                    UserProfile.ADMINISTRADOR,
+                    UserProfile.SECRETARIA,
+                  ]}
+                >
+                  <SolicitacoesCadastro />
                 </ProtectedRoute>
               }
             />
@@ -128,6 +145,7 @@ const App = () => (
                     UserProfile.GESTOR,
                     UserProfile.ADMINISTRADOR,
                     UserProfile.PROFESSOR,
+                    UserProfile.SECRETARIA,
                   ]}
                 >
                   <Turmas />
@@ -150,7 +168,7 @@ const App = () => (
               path="/periodos"
               element={
                 <ProtectedRoute
-                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR]}
+                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA]}
                 >
                   <Periodos />
                 </ProtectedRoute>
@@ -165,6 +183,7 @@ const App = () => (
                     UserProfile.GESTOR,
                     UserProfile.ADMINISTRADOR,
                     UserProfile.PROFESSOR,
+                    UserProfile.SECRETARIA,
                   ]}
                 >
                   <Notas />
@@ -179,6 +198,7 @@ const App = () => (
                     UserProfile.GESTOR,
                     UserProfile.ADMINISTRADOR,
                     UserProfile.PROFESSOR,
+                    UserProfile.SECRETARIA,
                   ]}
                 >
                   <NotaTurma />
@@ -194,6 +214,7 @@ const App = () => (
                     UserProfile.GESTOR,
                     UserProfile.ADMINISTRADOR,
                     UserProfile.PROFESSOR,
+                    UserProfile.SECRETARIA,
                   ]}
                 >
                   <Frequencia />
@@ -379,7 +400,15 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-            
+            <Route
+              path="/dados-instituicao"
+              element={
+                <ProtectedRoute>
+                  <DadosInstituicao />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Root route */}
             <Route path="/" element={<Index />} />
             

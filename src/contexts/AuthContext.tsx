@@ -1,12 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, AuthState, LoginCredentials, RegisterData, UserProfile } from '@/types/auth';
 import { syncKeysFromBackend } from '@/lib/mockStorage';
+import { addSolicitacao, findApprovedUserByCpf } from '@/lib/mockSolicitacoes';
+
+export type RegisterResult =
+  | { success: true; type: 'solicitation' }
+  | { success: true; type: 'logged_in' }
+  | { success: false; message?: string };
 
 interface AuthContextType extends AuthState {
   login: (credentials: LoginCredentials) => Promise<boolean>;
-  register: (data: RegisterData) => Promise<boolean>;
+  register: (data: RegisterData) => Promise<RegisterResult>;
   logout: () => void;
   hasPermission: (allowedProfiles: UserProfile[]) => boolean;
+  updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -49,6 +56,15 @@ const mockUsers: User[] = [
     perfil: UserProfile.ALUNO,
     primeiroAcesso: false,
     turmaId: '9A',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: '5',
+    cpf: '55555555555',
+    nome: 'Carla Secretária',
+    email: 'secretaria@escola.com',
+    perfil: UserProfile.SECRETARIA,
+    primeiroAcesso: false,
     createdAt: new Date().toISOString(),
   },
 ];
@@ -103,10 +119,13 @@ async function apiRequest<T>(
     ...options,
     headers,
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({})) as Record<string, unknown>;
   if (!res.ok) {
     const message =
-      typeof data?.error === 'string' ? data.error : `Erro HTTP ${res.status}`;
+      (typeof data?.detail === 'string' ? data.detail : null) ??
+      (typeof data?.message === 'string' ? data.message : null) ??
+      (typeof data?.error === 'string' ? data.error : null) ??
+      `Erro HTTP ${res.status}`;
     throw new Error(message);
   }
   return data as T;
@@ -190,7 +209,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Mock (modo demo/offline)
     await new Promise(resolve => setTimeout(resolve, 600));
     const cpfNorm = credentials.cpf.replace(/\D/g, '');
-    const user = mockUsers.find(u => u.cpf === cpfNorm);
+    let user: User | null = mockUsers.find(u => u.cpf === cpfNorm) ?? null;
+    if (!user) {
+      const approved = findApprovedUserByCpf(cpfNorm);
+      if (approved && approved.senha === credentials.senha) {
+        user = approved.user;
+      }
+    }
     if (!user) return false;
     // Admin (111.111.111-11) exige senha admin@Classe360
     if (cpfNorm === '11111111111' && credentials.senha !== 'admin@Classe360') return false;
@@ -207,53 +232,54 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return true;
   };
 
-  const register = async (data: RegisterData): Promise<boolean> => {
+  const register = async (data: RegisterData): Promise<RegisterResult> => {
     if (API_URL) {
       try {
-        const resp = await apiRequest<{ token: string; user: User }>('/api/v1/auth/register', {
+        const resp = await apiRequest<{ token?: string; user?: User; id?: number; message?: string }>('/api/v1/auth/register', {
           method: 'POST',
           body: JSON.stringify(data),
         });
 
-        localStorage.setItem('token', resp.token);
-        localStorage.setItem('user', JSON.stringify(resp.user));
-        void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
-
-        setAuthState({
-          user: resp.user,
-          token: resp.token,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-        return true;
-      } catch {
-        // fallback pro mock
+        // Se retornou token/user = fluxo antigo (login direto). Se retornou id/message = solicitação enviada.
+        if (resp.token && resp.user) {
+          localStorage.setItem('token', resp.token);
+          localStorage.setItem('user', JSON.stringify(resp.user));
+          void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
+          setAuthState({
+            user: resp.user,
+            token: resp.token,
+            isAuthenticated: true,
+            isLoading: false,
+          });
+          return { success: true, type: 'logged_in' };
+        }
+        return { success: true, type: 'solicitation' };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Erro ao conectar com o servidor';
+        return { success: false, message: msg };
       }
     }
 
-    // Mock (modo demo/offline)
-    await new Promise(resolve => setTimeout(resolve, 600));
-    const newUser: User = {
-      id: String(mockUsers.length + 1),
-      cpf: data.cpf.replace(/\D/g, ''),
-      nome: data.nome,
-      email: data.email,
-      perfil: UserProfile.ALUNO, // Default to student
-      primeiroAcesso: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    mockUsers.push(newUser);
-    const token = btoa(JSON.stringify({ id: newUser.id, exp: Date.now() + 86400000 }));
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(newUser));
-    setAuthState({
-      user: newUser,
-      token,
-      isAuthenticated: true,
-      isLoading: false,
-    });
-    return true;
+    // Mock (modo demo/offline): cria solicitação pendente em vez de login direto
+    try {
+      addSolicitacao({
+        cpf: data.cpf.replace(/\D/g, ''),
+        nome: data.nome,
+        email: data.email,
+        senha: data.senha,
+        dataNascimento: data.dataNascimento,
+        telefone: data.telefone,
+        rua: data.rua,
+        numero: data.numero,
+        complemento: data.complemento,
+        bairro: data.bairro,
+        cidade: data.cidade,
+        cep: data.cep,
+      });
+      return { success: true, type: 'solicitation' };
+    } catch {
+      return { success: false };
+    }
   };
 
   const logout = () => {
@@ -273,8 +299,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return allowedProfiles.includes(authState.user.perfil);
   };
 
+  const updateUser = (user: User) => {
+    localStorage.setItem('user', JSON.stringify(user));
+    setAuthState((prev) => ({ ...prev, user }));
+  };
+
   return (
-    <AuthContext.Provider value={{ ...authState, login, register, logout, hasPermission }}>
+    <AuthContext.Provider value={{ ...authState, login, register, logout, hasPermission, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

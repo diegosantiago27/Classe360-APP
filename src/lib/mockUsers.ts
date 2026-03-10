@@ -2,6 +2,8 @@ import { UserProfile } from '@/types/auth';
 
 export type UserStatus = 'ativo' | 'inativo';
 
+export type UserTurno = 'Manha' | 'Tarde' | 'Noite';
+
 export interface StoredUser {
   id: string;
   nome: string;
@@ -9,6 +11,7 @@ export interface StoredUser {
   cpf: string;
   perfil: UserProfile;
   status: UserStatus;
+  turno?: UserTurno;
   telefone?: string;
   dataNascimento?: string;
   endereco?: string;
@@ -34,7 +37,7 @@ export const defaultUsers: StoredUser[] = [
     materias: ['Matemática', 'Física'],
     turmas: ['9º Ano A', '9º Ano B'],
   },
-  { id: '4', nome: 'Pedro Oliveira', email: 'pedro@escola.com', cpf: '444.444.444-44', perfil: UserProfile.ALUNO, status: 'ativo' },
+  { id: '4', nome: 'Pedro Oliveira', email: 'pedro@escola.com', cpf: '444.444.444-44', perfil: UserProfile.ALUNO, status: 'ativo', turno: 'Manha' },
   {
     id: '5',
     nome: 'Carlos Mendes',
@@ -44,7 +47,7 @@ export const defaultUsers: StoredUser[] = [
     status: 'inativo',
     turmas: ['8º Ano A'],
   },
-  { id: '6', nome: 'Lucia Ferreira', email: 'lucia@escola.com', cpf: '666.666.666-66', perfil: UserProfile.ALUNO, status: 'ativo' },
+  { id: '6', nome: 'Lucia Ferreira', email: 'lucia@escola.com', cpf: '666.666.666-66', perfil: UserProfile.ALUNO, status: 'ativo', turno: 'Manha' },
   { id: '7', nome: 'Roberto Lima', email: 'roberto@escola.com', cpf: '777.777.777-77', perfil: UserProfile.ALUNO, status: 'ativo' },
   {
     id: '8',

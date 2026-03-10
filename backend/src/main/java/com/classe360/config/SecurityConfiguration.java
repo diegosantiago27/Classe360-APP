@@ -44,6 +44,7 @@ public class SecurityConfiguration {
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/authenticate")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.GET, "/api/authenticate")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/v1/auth/login")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/v1/auth/register")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.GET, "/api/v1/auth/me")).authenticated()
                     .requestMatchers(mvc.pattern("/api/register")).permitAll()
                     .requestMatchers(mvc.pattern("/api/activate")).permitAll()
