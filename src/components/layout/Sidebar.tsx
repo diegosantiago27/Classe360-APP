@@ -71,7 +71,7 @@ const navItems: NavItem[] = [
     icon: BookOpen,
     label: 'Turmas',
     path: '/turmas',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.SECRETARIA],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.SECRETARIA, UserProfile.ALUNO],
   },
   {
     icon: BookOpen,
@@ -83,7 +83,7 @@ const navItems: NavItem[] = [
     icon: BookOpen,
     label: 'Disciplinas',
     path: '/disciplinas',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA],
   },
   {
     icon: Calendar,

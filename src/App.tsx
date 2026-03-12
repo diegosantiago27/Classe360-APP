@@ -19,7 +19,9 @@ import NotFound from "./pages/NotFound";
 import Index from "./pages/Index";
 import PasswordRecovery from "./pages/PasswordRecovery";
 import Turmas from "./pages/Turmas";
+import TurmaDetalhe from "./pages/TurmaDetalhe";
 import Disciplinas from "./pages/Disciplinas";
+import DisciplinasCadastroHorarios from "./pages/DisciplinasCadastroHorarios";
 import Periodos from "./pages/Periodos";
 import Notas from "./pages/Notas";
 import Frequencia from "./pages/Frequencia";
@@ -146,9 +148,26 @@ const App = () => (
                     UserProfile.ADMINISTRADOR,
                     UserProfile.PROFESSOR,
                     UserProfile.SECRETARIA,
+                    UserProfile.ALUNO,
                   ]}
                 >
                   <Turmas />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/turmas/:id"
+              element={
+                <ProtectedRoute
+                  allowedProfiles={[
+                    UserProfile.GESTOR,
+                    UserProfile.ADMINISTRADOR,
+                    UserProfile.PROFESSOR,
+                    UserProfile.SECRETARIA,
+                    UserProfile.ALUNO,
+                  ]}
+                >
+                  <TurmaDetalhe />
                 </ProtectedRoute>
               }
             />
@@ -157,9 +176,19 @@ const App = () => (
               path="/disciplinas"
               element={
                 <ProtectedRoute
-                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR]}
+                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA]}
                 >
                   <Disciplinas />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/disciplinas/cadastro-horarios"
+              element={
+                <ProtectedRoute
+                  allowedProfiles={[UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA]}
+                >
+                  <DisciplinasCadastroHorarios />
                 </ProtectedRoute>
               }
             />

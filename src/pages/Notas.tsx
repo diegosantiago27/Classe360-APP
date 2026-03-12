@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 
 type LancamentoStatus = 'Pendente' | 'Concluida';
 
@@ -66,7 +67,8 @@ const defaultLancamentos: Lancamento[] = [
 
 const Notas: React.FC = () => {
   const { user } = useAuth();
-  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
+  const somenteConsulta =
+    user?.perfil === UserProfile.SECRETARIA || user?.perfil === UserProfile.PROFESSOR;
   const [lancamentos, setLancamentos] = useState<Lancamento[]>(
     () => loadFromStorage<Lancamento[]>(storageKey, defaultLancamentos),
   );
@@ -81,9 +83,18 @@ const Notas: React.FC = () => {
   });
   const [disciplinaSelecionada, setDisciplinaSelecionada] = useState<string>('todas');
   const [bimestreSelecionado, setBimestreSelecionado] = useState<string>('todos');
+  const [turnoSelecionado, setTurnoSelecionado] = useState<string>('todos');
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
     [],
+  );
+  const turmasDisponiveis = useMemo(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
+  );
+  const turnoPorTurma = useMemo(
+    () => new Map(turmasDisponiveis.map((turma) => [turma.nome, turma.turno])),
+    [turmasDisponiveis],
   );
   const disciplinaOptions = useMemo(
     () => disciplinasDisponiveis.map((item) => item.nome),
@@ -100,9 +111,11 @@ const Notas: React.FC = () => {
         disciplinaSelecionada === 'todas' || item.disciplina === disciplinaSelecionada;
       const matchBimestre =
         bimestreSelecionado === 'todos' || item.bimestre === bimestreSelecionado;
-      return matchDisciplina && matchBimestre;
+      const matchTurno =
+        turnoSelecionado === 'todos' || turnoPorTurma.get(item.turma) === turnoSelecionado;
+      return matchDisciplina && matchBimestre && matchTurno;
     });
-  }, [lancamentos, disciplinaSelecionada, bimestreSelecionado]);
+  }, [lancamentos, disciplinaSelecionada, bimestreSelecionado, turnoSelecionado, turnoPorTurma]);
 
   const pendentes = useMemo(
     () => lancamentosFiltrados.filter((item) => item.status === 'Pendente').length,
@@ -281,6 +294,22 @@ const Notas: React.FC = () => {
                         {bimestre}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="max-w-xs">
+                <Label htmlFor="filtro-turno" className="text-xs text-muted-foreground">
+                  Filtrar por turno
+                </Label>
+                <Select value={turnoSelecionado} onValueChange={setTurnoSelecionado}>
+                  <SelectTrigger id="filtro-turno">
+                    <SelectValue placeholder="Todos os turnos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os turnos</SelectItem>
+                    <SelectItem value="Manha">Manha</SelectItem>
+                    <SelectItem value="Tarde">Tarde</SelectItem>
+                    <SelectItem value="Noite">Noite</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

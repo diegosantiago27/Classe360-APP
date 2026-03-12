@@ -1,321 +1,238 @@
-import React, { useMemo, useState } from 'react';
-import { BookOpen, Download, FolderOpen, Pencil, Trash2 } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { CalendarDays, Clock, MapPin, Users } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
+import { loadFromStorage } from '@/lib/mockStorage';
+import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 
-type MaterialTipo = 'PDF' | 'PPT' | 'DOC' | 'LINK' | 'OUTRO';
-
-interface Material {
-  id: string;
-  titulo: string;
-  disciplina: string;
-  tipo: MaterialTipo;
-  atualizado: string;
-  link?: string;
+interface DisciplinaVinculoStorage {
+  disciplinaId: string;
+  turmaId: string;
+  professorId?: string;
+  professorNome?: string;
 }
 
-const storageKey = 'school-compass:materiais';
+interface AulaSemana {
+  disciplina: string;
+  turmaNome: string;
+  turno: string;
+  dia: string;
+  horario: string;
+}
 
-const defaultMateriais: Material[] = [
-  {
-    id: 'MAT-001',
-    titulo: 'Lista de exercicios - Funcoes',
-    disciplina: 'Matematica',
-    tipo: 'PDF',
-    atualizado: '20/01/2026',
-  },
-  {
-    id: 'MAT-002',
-    titulo: 'Slides - Movimento Uniforme',
-    disciplina: 'Fisica',
-    tipo: 'PPT',
-    atualizado: '18/01/2026',
-  },
-  {
-    id: 'MAT-003',
-    titulo: 'Resumo - Historia do Brasil',
-    disciplina: 'Historia',
-    tipo: 'DOC',
-    atualizado: '15/01/2026',
-  },
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const diasSemana = ['SEGUNDA', 'TERCA', 'QUARTA', 'QUINTA', 'SEXTA'];
+const horariosPorTurno: Record<string, string[]> = {
+  Manha: ['07:30 - 08:20', '08:20 - 09:10', '09:30 - 10:20'],
+  Tarde: ['13:00 - 13:50', '13:50 - 14:40', '14:40 - 15:30'],
+  Noite: ['19:00 - 19:50', '19:50 - 20:40', '20:40 - 21:30'],
+};
+const coresDisciplina = [
+  'bg-blue-600',
+  'bg-red-600',
+  'bg-emerald-600',
+  'bg-amber-500',
+  'bg-purple-600',
+  'bg-cyan-600',
 ];
 
 const Materiais: React.FC = () => {
-  const [materiais, setMateriais] = useState<Material[]>(
-    () => loadFromStorage<Material[]>(storageKey, defaultMateriais),
+  const { user } = useAuth();
+  const disciplinas = useMemo(
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    [],
   );
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Omit<Material, 'id'>>({
-    titulo: '',
-    disciplina: '',
-    tipo: 'PDF',
-    atualizado: '',
-    link: '',
-  });
+  const turmas = useMemo(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
+  );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
+    [],
+  );
 
-  const totalPorTipo = useMemo(() => {
-    return materiais.reduce(
-      (acc, material) => {
-        acc[material.tipo] = (acc[material.tipo] || 0) + 1;
-        return acc;
-      },
-      {} as Record<MaterialTipo, number>,
+  const vinculosProfessor = useMemo(() => {
+    if (!user) return [];
+    if (user.perfil !== UserProfile.PROFESSOR) return vinculos;
+    return vinculos.filter(
+      (v) => v.professorId === user.id || v.professorNome === user.nome,
     );
-  }, [materiais]);
+  }, [user, vinculos]);
 
-  const handleOpenCreate = () => {
-    setEditingId(null);
-    setDraft({
-      titulo: '',
-      disciplina: '',
-      tipo: 'PDF',
-      atualizado: '',
-      link: '',
+  const aulas = useMemo(() => {
+    return vinculosProfessor
+      .map((v, idx) => {
+        const turma = turmas.find((t) => t.id === v.turmaId);
+        const disciplina = disciplinas.find((d) => d.id === v.disciplinaId);
+        if (!turma || !disciplina) return null;
+        const horarios = horariosPorTurno[turma.turno] ?? horariosPorTurno.Manha;
+        const turnoOffset = turma.turno === 'Manha' ? 0 : turma.turno === 'Tarde' ? 1 : 2;
+        const dia = diasSemana[(idx + turnoOffset) % diasSemana.length];
+        const horario = horarios[idx % horarios.length];
+        return {
+          disciplina: disciplina.nome,
+          turmaNome: turma.nome,
+          turno: turma.turno,
+          dia,
+          horario,
+        } as AulaSemana;
+      })
+      .filter((item): item is AulaSemana => Boolean(item));
+  }, [disciplinas, turmas, vinculosProfessor]);
+
+  const resumoDisciplinas = useMemo(() => {
+    const map = new Map<string, { disciplina: string; turmas: Set<string>; aulas: number }>();
+    aulas.forEach((aula) => {
+      if (!map.has(aula.disciplina)) {
+        map.set(aula.disciplina, { disciplina: aula.disciplina, turmas: new Set(), aulas: 0 });
+      }
+      const item = map.get(aula.disciplina)!;
+      item.turmas.add(aula.turmaNome);
+      item.aulas += 1;
     });
-    setDialogOpen(true);
-  };
+    return Array.from(map.values());
+  }, [aulas]);
 
-  const handleOpenEdit = (material: Material) => {
-    setEditingId(material.id);
-    setDraft({
-      titulo: material.titulo,
-      disciplina: material.disciplina,
-      tipo: material.tipo,
-      atualizado: material.atualizado,
-      link: material.link ?? '',
+  const aulasPorDia = useMemo(() => {
+    const map = new Map<string, AulaSemana[]>();
+    diasSemana.forEach((dia) => map.set(dia, []));
+    aulas.forEach((aula) => {
+      map.get(aula.dia)?.push(aula);
     });
-    setDialogOpen(true);
-  };
+    diasSemana.forEach((dia) => {
+      map.get(dia)?.sort((a, b) => a.horario.localeCompare(b.horario));
+    });
+    return map;
+  }, [aulas]);
 
-  const handleSave = (event: React.FormEvent) => {
-    event.preventDefault();
-    const hoje = new Date().toLocaleDateString('pt-BR');
-    const normalized = {
-      ...draft,
-      atualizado: draft.atualizado || hoje,
-    };
-
-    if (editingId) {
-      const updated = materiais.map((material) =>
-        material.id === editingId ? { ...material, ...normalized } : material,
-      );
-      setMateriais(updated);
-      saveToStorage(storageKey, updated);
-    } else {
-      const newMateriais = [
-        { id: createId('material'), ...normalized },
-        ...materiais,
-      ];
-      setMateriais(newMateriais);
-      saveToStorage(storageKey, newMateriais);
-    }
-
-    setDialogOpen(false);
-  };
-
-  const handleDelete = (material: Material) => {
-    const confirmed = window.confirm(
-      `Deseja remover o material "${material.titulo}"?`,
-    );
-    if (!confirmed) return;
-    const updated = materiais.filter((item) => item.id !== material.id);
-    setMateriais(updated);
-    saveToStorage(storageKey, updated);
-  };
+  const turmasResumo = useMemo(() => {
+    const map = new Map<string, { turma: Turma; aulas: AulaSemana[] }>();
+    aulas.forEach((aula) => {
+      const turma = turmas.find((t) => t.nome === aula.turmaNome);
+      if (!turma) return;
+      if (!map.has(turma.id)) {
+        map.set(turma.id, { turma, aulas: [] });
+      }
+      map.get(turma.id)!.aulas.push(aula);
+    });
+    return Array.from(map.values());
+  }, [aulas, turmas]);
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">
-              Materiais
-            </h1>
-            <p className="text-muted-foreground">
-              Organize os recursos compartilhados com alunos e professores.
-            </p>
-          </div>
-          <Button variant="gradient" onClick={handleOpenCreate}>
-            <FolderOpen className="w-4 h-4" />
-            Adicionar material
-          </Button>
+      <div className="space-y-8">
+        <div>
+          <h1 className="font-display text-3xl font-bold text-foreground">
+            Minhas Disciplinas
+          </h1>
+          <p className="text-muted-foreground">
+            Visualize suas disciplinas, grade semanal e turmas atribuidas.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Total de materiais
-                </CardTitle>
-                <div className="text-2xl font-semibold text-foreground">
-                  {materiais.length}
-                </div>
-              </div>
-              <BookOpen className="w-5 h-5 text-primary" />
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  PDFs
-                </CardTitle>
-                <div className="text-2xl font-semibold text-foreground">
-                  {totalPorTipo.PDF || 0}
-                </div>
-              </div>
-              <BookOpen className="w-5 h-5 text-accent" />
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Links
-                </CardTitle>
-                <div className="text-2xl font-semibold text-foreground">
-                  {totalPorTipo.LINK || 0}
-                </div>
-              </div>
-              <BookOpen className="w-5 h-5 text-warning" />
-            </CardHeader>
-          </Card>
-        </div>
-
-        {materiais.length === 0 ? (
+        {resumoDisciplinas.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Nenhum material cadastrado. Clique em "Adicionar material".
+            Nenhuma disciplina atribuida no momento.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {materiais.map((material) => (
-              <Card key={material.id} className="card-hover">
-                <CardHeader>
-                  <CardTitle className="text-lg">{material.titulo}</CardTitle>
-                  <CardDescription>{material.disciplina}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <BookOpen className="w-4 h-4" />
-                    Atualizado em {material.atualizado}
-                  </div>
-                  {material.link && (
-                    <div className="text-xs text-primary truncate">
-                      {material.link}
+          <>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+              {resumoDisciplinas.map((item, idx) => (
+                <Card key={item.disciplina} className={`${coresDisciplina[idx % coresDisciplina.length]} text-white border-0`}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">{item.disciplina}</CardTitle>
+                    <CardDescription className="text-white/80">
+                      {item.turmas.size} turma(s)
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 text-sm text-white/90">
+                    {item.aulas} aula(s)/semana
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="font-display text-xl font-semibold text-foreground flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-primary" />
+                Grade Semanal
+              </h2>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+                {diasSemana.map((dia) => (
+                  <div key={dia} className="space-y-2">
+                    <div className="rounded-md bg-blue-700 py-2 text-center text-sm font-bold text-white">
+                      {dia}
                     </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <Badge variant="secondary">{material.tipo}</Badge>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline">
-                        <Download className="w-4 h-4" />
-                        Baixar
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleOpenEdit(material)}>
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDelete(material)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    {(aulasPorDia.get(dia) ?? []).length === 0 ? (
+                      <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                        Sem aulas
+                      </div>
+                    ) : (
+                      (aulasPorDia.get(dia) ?? []).map((aula, idx) => (
+                        <div
+                          key={`${dia}-${aula.turmaNome}-${aula.disciplina}-${idx}`}
+                          className={`rounded-md p-3 text-white ${coresDisciplina[idx % coresDisciplina.length]}`}
+                        >
+                          <p className="font-semibold">{aula.disciplina}</p>
+                          <p className="text-xs text-white/90 flex items-center gap-1 mt-1">
+                            <MapPin className="w-3 h-3" />
+                            {aula.turmaNome} - {aula.turno}
+                          </p>
+                          <p className="text-xs text-white/90 flex items-center gap-1 mt-1">
+                            <Clock className="w-3 h-3" />
+                            {aula.horario}
+                          </p>
+                        </div>
+                      ))
+                    )}
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="font-display text-xl font-semibold text-foreground flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                Minhas Turmas
+              </h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {turmasResumo.map((item) => (
+                  <Card key={item.turma.id}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg">{item.turma.nome}</CardTitle>
+                        <Badge variant="secondary">{item.turma.turno}</Badge>
+                      </div>
+                      <CardDescription>{item.turma.nome.split(' ')[0]} ano</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      {item.aulas.slice(0, 4).map((aula, idx) => (
+                        <div key={`${item.turma.id}-${idx}`} className="text-muted-foreground flex items-center gap-2">
+                          <CalendarDays className="w-4 h-4" />
+                          <span>{aula.dia}</span>
+                          <Clock className="w-4 h-4" />
+                          <span>{aula.horario}</span>
+                          <span>-</span>
+                          <span>{aula.disciplina}</span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ))}
+                {turmasResumo.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground md:col-span-2 xl:col-span-3">
+                    Nenhuma turma atribuida para exibir.
+                  </div>
+                )}
+                </div>
+              </div>
+          </>
         )}
       </div>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingId ? 'Editar material' : 'Novo material'}
-            </DialogTitle>
-            <DialogDescription>
-              Cadastre materiais de apoio para as turmas.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="titulo">Titulo</Label>
-              <Input
-                id="titulo"
-                value={draft.titulo}
-                onChange={(event) => setDraft((prev) => ({ ...prev, titulo: event.target.value }))}
-                placeholder="Ex: Lista de exercicios"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="disciplina">Disciplina</Label>
-              <Input
-                id="disciplina"
-                value={draft.disciplina}
-                onChange={(event) => setDraft((prev) => ({ ...prev, disciplina: event.target.value }))}
-                placeholder="Ex: Matematica"
-                required
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="tipo">Tipo</Label>
-                <Select
-                  value={draft.tipo}
-                  onValueChange={(value) =>
-                    setDraft((prev) => ({ ...prev, tipo: value as MaterialTipo }))
-                  }
-                >
-                  <SelectTrigger id="tipo">
-                    <SelectValue placeholder="Selecione o tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PDF">PDF</SelectItem>
-                    <SelectItem value="PPT">PPT</SelectItem>
-                    <SelectItem value="DOC">DOC</SelectItem>
-                    <SelectItem value="LINK">LINK</SelectItem>
-                    <SelectItem value="OUTRO">OUTRO</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="atualizado">Atualizado em</Label>
-                <Input
-                  id="atualizado"
-                  value={draft.atualizado}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, atualizado: event.target.value }))}
-                  placeholder="Ex: 20/01/2026"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="link">Link (opcional)</Label>
-              <Input
-                id="link"
-                value={draft.link}
-                onChange={(event) => setDraft((prev) => ({ ...prev, link: event.target.value }))}
-                placeholder="https://..."
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="gradient">
-                Salvar
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </DashboardLayout>
   );
 };

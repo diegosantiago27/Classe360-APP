@@ -75,6 +75,7 @@ const baseSyncKeys = [
   'school-compass:usuarios',
   'school-compass:turmas',
   'school-compass:disciplinas',
+  'school-compass:disciplinas-vinculos',
   'school-compass:periodos',
   'school-compass:notas',
   'school-compass:notas-alunos',

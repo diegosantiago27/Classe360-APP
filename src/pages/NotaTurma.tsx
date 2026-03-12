@@ -1,9 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 
@@ -27,6 +30,8 @@ interface NotaAluno {
   turma: string;
   disciplina: string;
   bimestre: string;
+  trabalhosNota?: number | null;
+  provasNota?: number | null;
   nota: number | null;
 }
 
@@ -58,40 +63,42 @@ const atividadesEntregasStorageKey = 'school-compass:atividades-entregas';
 const defaultLancamentos: Lancamento[] = [
   {
     id: 'MAT-9A-1',
-    turma: '9º Ano A',
+    turma: '9o Ano A',
     disciplina: 'Matematica',
-    bimestre: '1º Bimestre',
+    bimestre: '1o Bimestre',
   },
   {
     id: 'MAT-9B-1',
-    turma: '9º Ano B',
+    turma: '9o Ano B',
     disciplina: 'Matematica',
-    bimestre: '1º Bimestre',
+    bimestre: '1o Bimestre',
   },
   {
     id: 'FIS-8A-2',
-    turma: '8º Ano A',
+    turma: '8o Ano A',
     disciplina: 'Fisica',
-    bimestre: '2º Bimestre',
+    bimestre: '2o Bimestre',
   },
   {
     id: 'POR-7C-1',
-    turma: '7º Ano C',
+    turma: '7o Ano C',
     disciplina: 'Portugues',
-    bimestre: '1º Bimestre',
+    bimestre: '1o Bimestre',
   },
 ];
 
 const defaultAlunos: AlunoTurma[] = [
-  { id: 'AL-9A-1', nome: 'Pedro Oliveira', turma: '9º Ano A' },
-  { id: 'AL-9A-2', nome: 'Maria Souza', turma: '9º Ano A' },
-  { id: 'AL-9B-1', nome: 'Joao Pedro', turma: '9º Ano B' },
-  { id: 'AL-9B-2', nome: 'Ana Lima', turma: '9º Ano B' },
-  { id: 'AL-8A-1', nome: 'Lucia Ferreira', turma: '8º Ano A' },
-  { id: 'AL-7C-1', nome: 'Bruno Santos', turma: '7º Ano C' },
+  { id: 'AL-9A-1', nome: 'Pedro Oliveira', turma: '9o Ano A' },
+  { id: 'AL-9A-2', nome: 'Maria Souza', turma: '9o Ano A' },
+  { id: 'AL-9B-1', nome: 'Joao Pedro', turma: '9o Ano B' },
+  { id: 'AL-9B-2', nome: 'Ana Lima', turma: '9o Ano B' },
+  { id: 'AL-8A-1', nome: 'Lucia Ferreira', turma: '8o Ano A' },
+  { id: 'AL-7C-1', nome: 'Bruno Santos', turma: '7o Ano C' },
 ];
 
 const NotaTurma: React.FC = () => {
+  const { user } = useAuth();
+  const podeEditarNotas = user?.perfil !== UserProfile.SECRETARIA;
   const { id } = useParams();
   const lancamentos = useMemo(
     () => loadFromStorage<Lancamento[]>(lancamentosStorageKey, defaultLancamentos),
@@ -101,9 +108,8 @@ const NotaTurma: React.FC = () => {
     () => lancamentos.find((item) => item.id === id) ?? null,
     [id, lancamentos],
   );
-  const notasAlunos = useMemo(
+  const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(
     () => loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
-    [],
   );
   const respostasProvas = useMemo(
     () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
@@ -124,23 +130,28 @@ const NotaTurma: React.FC = () => {
     );
   }, [lancamento, notasAlunos]);
 
-  const notasExibidas = useMemo(() => {
-    if (!lancamento) return [];
-    if (notasDaTurma.length > 0) return notasDaTurma;
+  useEffect(() => {
+    if (!lancamento) return;
+    if (notasDaTurma.length > 0) return;
     const alunosTurma = defaultAlunos.filter((aluno) => aluno.turma === lancamento.turma);
-    const novasNotas: NotaAluno[] = alunosTurma.map((aluno, index) => ({
+    const novasNotas: NotaAluno[] = alunosTurma.map((aluno) => ({
       id: createId('nota-aluno'),
       alunoId: aluno.id,
       alunoNome: aluno.nome,
       turma: lancamento.turma,
       disciplina: lancamento.disciplina,
       bimestre: lancamento.bimestre,
+      trabalhosNota: null,
+      provasNota: null,
       nota: null,
     }));
+    if (novasNotas.length === 0) return;
     const updated = [...notasAlunos, ...novasNotas];
+    setNotasAlunos(updated);
     saveToStorage(notasAlunosStorageKey, updated);
-    return novasNotas;
-  }, [lancamento, notasDaTurma, notasAlunos]);
+  }, [lancamento, notasDaTurma.length, notasAlunos]);
+
+  const notasExibidas = useMemo(() => notasDaTurma, [notasDaTurma]);
 
   const notasOrdenadas = useMemo(() => {
     return [...notasExibidas].sort((a, b) =>
@@ -216,27 +227,68 @@ const NotaTurma: React.FC = () => {
           nota.disciplina === lancamento.disciplina &&
           typeof nota.nota === 'number',
       );
+      const notaAtualBimestre =
+        notasAlunos.find(
+          (nota) =>
+            nota.alunoId === aluno.alunoId &&
+            nota.turma === lancamento.turma &&
+            nota.disciplina === lancamento.disciplina &&
+            nota.bimestre === lancamento.bimestre,
+        ) ?? null;
+      const trabalhosExibicao =
+        typeof notaAtualBimestre?.trabalhosNota === 'number'
+          ? notaAtualBimestre.trabalhosNota
+          : mediaTrabalhos;
+      const provasExibicao =
+        typeof notaAtualBimestre?.provasNota === 'number'
+          ? notaAtualBimestre.provasNota
+          : mediaProvas;
+      const notaExibicao =
+        typeof notaAtualBimestre?.nota === 'number' ? notaAtualBimestre.nota : mediaFinal;
       const totalRegistrado = notasRegistradas.reduce((acc, item) => acc + (item.nota ?? 0), 0);
-      const temTotal = notasRegistradas.length > 0 || typeof mediaFinal === 'number';
+      const temTotal = notasRegistradas.length > 0 || typeof notaExibicao === 'number';
 
       return {
         ...aluno,
         mediaProvas,
         mediaTrabalhos,
         mediaFinal,
+        trabalhosExibicao,
+        provasExibicao,
+        notaExibicao,
         totalBimestres: temTotal
-          ? Math.round((notasRegistradas.length > 0 ? totalRegistrado : mediaFinal ?? 0) * 10) / 10
+          ? Math.round((notasRegistradas.length > 0 ? totalRegistrado : notaExibicao ?? 0) * 10) / 10
           : null,
       };
     });
   }, [alunosDaTurma, entregasAtividades, lancamento, notasAlunos, respostasProvas]);
+
+  const handleNotaChange = (alunoId: string, field: 'trabalhosNota' | 'provasNota' | 'nota', rawValue: string) => {
+    if (!lancamento) return;
+    const normalizedValue =
+      rawValue.trim() === ''
+        ? null
+        : Math.max(0, Math.min(10, Number(rawValue.replace(',', '.'))));
+    if (normalizedValue !== null && Number.isNaN(normalizedValue)) return;
+
+    const updated = notasAlunos.map((nota) => {
+      const isTarget =
+        nota.alunoId === alunoId &&
+        nota.turma === lancamento.turma &&
+        nota.disciplina === lancamento.disciplina &&
+        nota.bimestre === lancamento.bimestre;
+      return isTarget ? { ...nota, [field]: normalizedValue } : nota;
+    });
+    setNotasAlunos(updated);
+    saveToStorage(notasAlunosStorageKey, updated);
+  };
 
   if (!lancamento) {
     return (
       <DashboardLayout>
         <div className="space-y-4">
           <h1 className="font-display text-3xl font-bold text-foreground">
-            Notas não encontradas
+            Notas nao encontradas
           </h1>
           <Link to="/notas">
             <Button variant="outline">
@@ -263,7 +315,7 @@ const NotaTurma: React.FC = () => {
               Notas da turma
             </h1>
             <p className="text-muted-foreground">
-              {lancamento.turma} • {lancamento.disciplina} • {lancamento.bimestre}
+              {lancamento.turma} - {lancamento.disciplina} - {lancamento.bimestre}
             </p>
           </div>
         </div>
@@ -284,7 +336,7 @@ const NotaTurma: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-16">Nº</TableHead>
+                    <TableHead className="w-16">No</TableHead>
                     <TableHead>Aluno</TableHead>
                     <TableHead className="text-right">Trabalhos</TableHead>
                     <TableHead className="text-right">Provas</TableHead>
@@ -298,13 +350,46 @@ const NotaTurma: React.FC = () => {
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                       <TableCell className="font-medium">{nota.alunoNome}</TableCell>
                       <TableCell className="text-right">
-                        {typeof nota.mediaTrabalhos === 'number' ? nota.mediaTrabalhos.toFixed(1) : '-'}
+                        {podeEditarNotas ? (
+                          <Input
+                            className="ml-auto h-8 w-24 text-right"
+                            value={typeof nota.trabalhosExibicao === 'number' ? nota.trabalhosExibicao.toFixed(1) : ''}
+                            onChange={(event) => handleNotaChange(nota.alunoId, 'trabalhosNota', event.target.value)}
+                            placeholder="-"
+                          />
+                        ) : typeof nota.trabalhosExibicao === 'number' ? (
+                          nota.trabalhosExibicao.toFixed(1)
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {typeof nota.mediaProvas === 'number' ? nota.mediaProvas.toFixed(1) : '-'}
+                        {podeEditarNotas ? (
+                          <Input
+                            className="ml-auto h-8 w-24 text-right"
+                            value={typeof nota.provasExibicao === 'number' ? nota.provasExibicao.toFixed(1) : ''}
+                            onChange={(event) => handleNotaChange(nota.alunoId, 'provasNota', event.target.value)}
+                            placeholder="-"
+                          />
+                        ) : typeof nota.provasExibicao === 'number' ? (
+                          nota.provasExibicao.toFixed(1)
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {typeof nota.mediaFinal === 'number' ? nota.mediaFinal.toFixed(1) : '-'}
+                        {podeEditarNotas ? (
+                          <Input
+                            className="ml-auto h-8 w-24 text-right"
+                            value={typeof nota.notaExibicao === 'number' ? nota.notaExibicao.toFixed(1) : ''}
+                            onChange={(event) => handleNotaChange(nota.alunoId, 'nota', event.target.value)}
+                            placeholder="-"
+                          />
+                        ) : typeof nota.notaExibicao === 'number' ? (
+                          nota.notaExibicao.toFixed(1)
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         {typeof nota.totalBimestres === 'number' ? nota.totalBimestres.toFixed(1) : '-'}
