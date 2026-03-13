@@ -43,6 +43,7 @@ import SolicitacoesCadastro from "./pages/SolicitacoesCadastro";
 import Correcoes from "./pages/Correcoes";
 import CorrecoesDetalhe from "./pages/CorrecoesDetalhe";
 import Agenda from "./pages/Agenda";
+import AgendaSemanal from "./pages/AgendaSemanal";
 import Relatorios from "./pages/Relatorios";
 import ProvasAluno from "./pages/ProvasAluno";
 import ProvaRealizar from "./pages/ProvaRealizar";
@@ -293,6 +294,20 @@ const App = () => (
               element={
                 <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
                   <Agenda />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agenda-semanal"
+              element={
+                <ProtectedRoute
+                  allowedProfiles={[
+                    UserProfile.GESTOR,
+                    UserProfile.ADMINISTRADOR,
+                    UserProfile.SECRETARIA,
+                  ]}
+                >
+                  <AgendaSemanal />
                 </ProtectedRoute>
               }
             />

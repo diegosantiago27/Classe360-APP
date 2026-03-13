@@ -110,6 +110,12 @@ const navItems: NavItem[] = [
     profiles: [UserProfile.PROFESSOR],
   },
   {
+    icon: Calendar,
+    label: 'Agenda Semanal',
+    path: '/agenda-semanal',
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.SECRETARIA],
+  },
+  {
     icon: ClipboardList,
     label: 'Atividades',
     path: '/atividades',

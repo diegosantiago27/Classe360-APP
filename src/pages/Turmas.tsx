@@ -30,6 +30,12 @@ interface DisciplinaVinculoStorage {
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const onlyDigits = (value: string) => value.replace(/\D/g, '');
+const parseNomeTurma = (nome: string) => {
+  const anoNumero = nome.match(/(\d+)/)?.[1] ?? '';
+  const letraTurma = nome.split(/\s+/).pop()?.replace(/[^a-zA-Z]/g, '').toUpperCase() ?? '';
+  return { anoNumero, letraTurma };
+};
+const getSerieNumero = (nomeTurma: string) => nomeTurma.match(/(\d+)/)?.[1] ?? '';
 
 interface UsuarioApi {
   id: number;
@@ -81,6 +87,8 @@ const Turmas: React.FC = () => {
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [nomeTurma, setNomeTurma] = useState('');
+  const [anoSerie, setAnoSerie] = useState('');
   const [alunosSelecionados, setAlunosSelecionados] = useState<string[]>([]);
   const [alunoCpfBusca, setAlunoCpfBusca] = useState('');
   const [draft, setDraft] = useState<Omit<Turma, 'id'>>({
@@ -176,6 +184,7 @@ const Turmas: React.FC = () => {
   }, [turmas, usuarios, user, vinculos]);
   const alunosQuantidadeRealPorTurmaId = useMemo(() => {
     const map = new Map<string, number>();
+    const usuarioPorId = new Map(usuarios.map((u) => [u.id, u]));
 
     turmas.forEach((turma) => {
       const ids = new Set<string>();
@@ -190,7 +199,19 @@ const Turmas: React.FC = () => {
       vinculos
         .filter((v) => v.turmaId === turma.id)
         .forEach((v) => {
-          (v.alunos ?? []).forEach((a) => ids.add(a.alunoId));
+          (v.alunos ?? []).forEach((a) => {
+            const usuario = usuarioPorId.get(a.alunoId);
+            // Evita contar "vinculo fantasma" quando o cadastro oficial do aluno
+            // já está em outra turma.
+            if (!usuario) {
+              ids.add(a.alunoId);
+              return;
+            }
+            if (usuario.perfil !== UserProfile.ALUNO || usuario.status !== 'ativo') return;
+            if ((usuario.turmas ?? []).includes(turma.nome)) {
+              ids.add(a.alunoId);
+            }
+          });
         });
 
       map.set(turma.id, ids.size);
@@ -207,17 +228,6 @@ const Turmas: React.FC = () => {
       ),
     [alunosQuantidadeRealPorTurmaId, turmasVisiveis],
   );
-  const nomesTurmasSugeridas = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          turmas
-            .map((turma) => turma.nome.trim())
-            .filter((nome) => Boolean(nome)),
-        ),
-      ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })),
-    [turmas],
-  );
   const turmasAtivas = useMemo(
     () => turmasVisiveis.filter((turma) => turma.status === 'Ativa').length,
     [turmasVisiveis],
@@ -232,6 +242,8 @@ const Turmas: React.FC = () => {
 
   const handleOpenCreate = () => {
     setEditingId(null);
+    setNomeTurma('');
+    setAnoSerie('');
     setAlunosSelecionados([]);
     setAlunoCpfBusca('');
     setDraft({
@@ -247,6 +259,9 @@ const Turmas: React.FC = () => {
 
   const handleOpenEdit = (turma: Turma) => {
     setEditingId(turma.id);
+    const parsed = parseNomeTurma(turma.nome);
+    setNomeTurma(parsed.letraTurma);
+    setAnoSerie(parsed.anoNumero);
     setAlunoCpfBusca('');
     setAlunosSelecionados(
       usuarios
@@ -266,8 +281,10 @@ const Turmas: React.FC = () => {
 
   const handleSave = (event: React.FormEvent) => {
     event.preventDefault();
-    const turmaNome = draft.nome.trim();
-    if (!turmaNome) return;
+    const letraTurma = nomeTurma.trim().replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 1);
+    const anoNumero = anoSerie.trim().replace(/\D/g, '').slice(0, 2);
+    if (!letraTurma || !anoNumero) return;
+    const turmaNome = `${anoNumero}º Ano ${letraTurma}`;
     const nomeNormalizado = turmaNome.toLocaleLowerCase('pt-BR');
     const turmaDuplicada = turmas.some((turma) => {
       if (editingId && turma.id === editingId) return false;
@@ -284,6 +301,25 @@ const Turmas: React.FC = () => {
     const oldTurmaNome = editingId
       ? turmas.find((turma) => turma.id === editingId)?.nome ?? null
       : null;
+
+    const alunosEmSerieDiferente = alunosSelecionados
+      .map((alunoId) => usuarios.find((u) => u.id === alunoId))
+      .filter((u): u is StoredUser => Boolean(u))
+      .filter((aluno) => {
+        const turmasAtuais = (aluno.turmas ?? []).filter((t) => t !== (oldTurmaNome ?? ''));
+        return turmasAtuais.some((turmaAtualNome) => {
+          const serieAtual = getSerieNumero(turmaAtualNome);
+          if (!serieAtual || !anoNumero) return false;
+          return serieAtual !== anoNumero;
+        });
+      });
+    if (alunosEmSerieDiferente.length > 0) {
+      const nomes = alunosEmSerieDiferente.map((a) => a.nome).join(', ');
+      window.alert(
+        `Nao e permitido vincular aluno em duas series diferentes ao mesmo tempo. Ajuste os alunos: ${nomes}.`,
+      );
+      return;
+    }
 
     const updatedUsers = usuarios.map((usuario) => {
       if (usuario.perfil !== UserProfile.ALUNO) return usuario;
@@ -510,23 +546,31 @@ const Turmas: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSave} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="nome">Nome da turma</Label>
-              <Input
-                id="nome"
-                value={draft.nome}
-                onChange={(event) => setDraft((prev) => ({ ...prev, nome: event.target.value }))}
-                placeholder="Ex: 9º Ano A"
-                list="turmas-sugeridas"
-                required
-              />
-              <datalist id="turmas-sugeridas">
-                {nomesTurmasSugeridas.map((nomeTurma) => (
-                  <option key={nomeTurma} value={nomeTurma} />
-                ))}
-              </datalist>
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="nome-turma">Nome da Turma</Label>
+                <Input
+                  id="nome-turma"
+                  value={nomeTurma}
+                  onChange={(event) =>
+                    setNomeTurma(
+                      event.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 1),
+                    )
+                  }
+                  placeholder="Ex: A"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ano-serie">Ano/Serie</Label>
+                <Input
+                  id="ano-serie"
+                  value={anoSerie}
+                  onChange={(event) => setAnoSerie(event.target.value.replace(/\D/g, '').slice(0, 2))}
+                  placeholder="Ex: 6"
+                  required
+                />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="turno">Turno</Label>
                 <Select
@@ -542,24 +586,6 @@ const Turmas: React.FC = () => {
                     <SelectItem value="Manha">Manha</SelectItem>
                     <SelectItem value="Tarde">Tarde</SelectItem>
                     <SelectItem value="Noite">Noite</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="status">Status</Label>
-                <Select
-                  value={draft.status}
-                  onValueChange={(value) =>
-                    setDraft((prev) => ({ ...prev, status: value as TurmaStatus }))
-                  }
-                >
-                  <SelectTrigger id="status">
-                    <SelectValue placeholder="Selecione o status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Ativa">Ativa</SelectItem>
-                    <SelectItem value="Planejada">Planejada</SelectItem>
-                    <SelectItem value="Inativa">Inativa</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

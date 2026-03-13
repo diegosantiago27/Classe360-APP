@@ -180,6 +180,13 @@ const Dashboard: React.FC = () => {
           description: 'Visualizar e gerenciar turmas',
           to: '/turmas',
           variant: 'professor' as const,
+        },
+        {
+          icon: Calendar,
+          title: 'Agenda Semanal',
+          description: 'Visualizar aulas por disciplina e turma',
+          to: '/agenda-semanal',
+          variant: 'primary' as const,
         }
       );
     }
@@ -205,6 +212,13 @@ const Dashboard: React.FC = () => {
           title: 'Períodos',
           description: 'Consultar períodos',
           to: '/periodos',
+          variant: 'primary' as const,
+        },
+        {
+          icon: Calendar,
+          title: 'Agenda Semanal',
+          description: 'Visualizar aulas por disciplina e turma',
+          to: '/agenda-semanal',
           variant: 'primary' as const,
         },
         {

@@ -29,6 +29,8 @@ public class StorageResource {
         "school-compass:turmas",
         "school-compass:disciplinas",
         "school-compass:disciplinas-vinculos",
+        "school-compass:grade-aulas",
+        "school-compass:disciplinas-cores",
         "school-compass:periodos",
         "school-compass:notas",
         "school-compass:notas-alunos",

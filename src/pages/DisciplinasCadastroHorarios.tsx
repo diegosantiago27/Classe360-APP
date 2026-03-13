@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, BookOpen, CalendarDays, Plus, Users } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, BookOpen, CalendarDays, Plus } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
+import { UserProfile } from '@/types/auth';
+
+interface UsuarioApi {
+  id: number;
+  cpf: string;
+  nome: string;
+  email: string;
+  role: string;
+  ativo: boolean;
+}
 
 interface AulaCadastrada {
   id: string;
@@ -20,8 +31,44 @@ interface AulaCadastrada {
   fim: string;
 }
 
+interface AlunoVinculado {
+  alunoId: string;
+  alunoNome: string;
+  turno?: 'Manha' | 'Tarde' | 'Noite';
+  ano?: string;
+  serie?: string;
+}
+
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  alunos: AlunoVinculado[];
+}
+
 const aulasStorageKey = 'school-compass:grade-aulas';
 const coresStorageKey = 'school-compass:disciplinas-cores';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+function roleToPerfil(role: string): UserProfile {
+  switch (role) {
+    case 'ROLE_GESTOR':
+      return UserProfile.GESTOR;
+    case 'ROLE_ADMIN':
+    case 'ADMIN':
+      return UserProfile.ADMINISTRADOR;
+    case 'ROLE_SECRETARIA':
+      return UserProfile.SECRETARIA;
+    case 'ROLE_PROFESSOR':
+      return UserProfile.PROFESSOR;
+    case 'ROLE_ALUNO':
+    default:
+      return UserProfile.ALUNO;
+  }
+}
 const cores = [
   'blue',
   'green',
@@ -44,11 +91,22 @@ const classeCor: Record<string, string> = {
 };
 
 const DisciplinasCadastroHorarios: React.FC = () => {
+  const location = useLocation();
+  const disciplinaIdQuery = useMemo(
+    () => new URLSearchParams(location.search).get('disciplinaId') ?? '',
+    [location.search],
+  );
   const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
   );
-  const [turmas, setTurmas] = useState<Turma[]>(
+  const [turmas] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+  );
+  const [usuarios, setUsuarios] = useState<StoredUser[]>(
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+  );
+  const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
   );
   const [aulas, setAulas] = useState<AulaCadastrada[]>(
     () => loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
@@ -59,10 +117,7 @@ const DisciplinasCadastroHorarios: React.FC = () => {
 
   const [nomeDisciplina, setNomeDisciplina] = useState('');
   const [corSelecionada, setCorSelecionada] = useState('blue');
-
-  const [nomeTurma, setNomeTurma] = useState('');
-  const [anoSerie, setAnoSerie] = useState('');
-  const [turnoTurma, setTurnoTurma] = useState<'Manha' | 'Tarde' | 'Noite'>('Manha');
+  const [professorId, setProfessorId] = useState('');
 
   const [disciplinaAulaId, setDisciplinaAulaId] = useState('');
   const [turmaAulaId, setTurmaAulaId] = useState('');
@@ -71,6 +126,54 @@ const DisciplinasCadastroHorarios: React.FC = () => {
   const [fimAula, setFimAula] = useState('08:20');
 
   const totalAulas = useMemo(() => aulas.length, [aulas]);
+  const professores = useMemo(
+    () => usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR && u.status === 'ativo'),
+    [usuarios],
+  );
+  const turmasOrdenadas = useMemo(() => {
+    return [...turmas].sort((a, b) => {
+      const numA = parseInt(a.nome.match(/(\d+)/)?.[1] ?? '0', 10);
+      const numB = parseInt(b.nome.match(/(\d+)/)?.[1] ?? '0', 10);
+      if (numA !== numB) return numA - numB;
+      const letraA = a.nome.split(/\s+/).pop() ?? '';
+      const letraB = b.nome.split(/\s+/).pop() ?? '';
+      return letraA.localeCompare(letraB);
+    });
+  }, [turmas]);
+
+  useEffect(() => {
+    if (!disciplinaIdQuery) return;
+    setDisciplinaAulaId(disciplinaIdQuery);
+  }, [disciplinaIdQuery]);
+
+  useEffect(() => {
+    if (!API_URL) return;
+    let cancelled = false;
+    const token = localStorage.getItem('token');
+    fetch(`${API_URL}/api/usuarios?size=500`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        const content = (data.content ?? data) as UsuarioApi[];
+        const mapped: StoredUser[] = content.map((u) => ({
+          id: String(u.id),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
+          turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
+          status: u.ativo ? 'ativo' : 'inativo',
+          turmas: (u as { turmas?: string[] }).turmas ?? [],
+        }));
+        setUsuarios(mapped);
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleAddDisciplina = () => {
     const nome = nomeDisciplina.trim();
@@ -92,34 +195,6 @@ const DisciplinasCadastroHorarios: React.FC = () => {
     setNomeDisciplina('');
   };
 
-  const handleAddTurma = () => {
-    const letraTurma = nomeTurma.trim().replace(/[^a-zA-Z]/g, '').toUpperCase();
-    const anoNumero = anoSerie.trim().replace(/\D/g, '');
-    if (!letraTurma || !anoNumero) return;
-    const nomeCompleto = `${anoNumero}º Ano ${letraTurma}`;
-    const existe = turmas.some(
-      (t) => t.nome.trim().toLowerCase() === nomeCompleto.toLowerCase() && t.turno === turnoTurma,
-    );
-    if (existe) {
-      window.alert('Ja existe uma turma com esse nome e turno.');
-      return;
-    }
-    const nova: Turma = {
-      id: createId('turma'),
-      nome: nomeCompleto,
-      turno: turnoTurma,
-      alunos: 0,
-      professor: '',
-      status: 'Ativa',
-      proximaAula: '',
-    };
-    const updated = [...turmas, nova];
-    setTurmas(updated);
-    saveToStorage(turmasStorageKey, updated);
-    setNomeTurma('');
-    setAnoSerie('');
-  };
-
   const handleAddAula = () => {
     if (!disciplinaAulaId || !turmaAulaId) return;
     const nova: AulaCadastrada = {
@@ -133,6 +208,63 @@ const DisciplinasCadastroHorarios: React.FC = () => {
     const updated = [...aulas, nova];
     setAulas(updated);
     saveToStorage(aulasStorageKey, updated);
+
+    // Mantem Disciplinas sincronizada: se professor ja foi escolhido,
+    // grava/atualiza o vinculo da disciplina no mesmo fluxo do cadastro de aula.
+    if (professorId) {
+      const turmaNome = turmas.find((t) => t.id === turmaAulaId)?.nome ?? '';
+      const professorNome = professores.find((p) => p.id === professorId)?.nome ?? '';
+      if (turmaNome && professorNome) {
+        const existente = vinculos.find(
+          (v) => v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId,
+        );
+        const novo: DisciplinaVinculo = {
+          disciplinaId: disciplinaAulaId,
+          turmaId: turmaAulaId,
+          turmaNome,
+          professorId,
+          professorNome,
+          alunos: existente?.alunos ?? [],
+        };
+        const updatedVinculos = existente
+          ? vinculos.map((v) =>
+              v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId ? novo : v,
+            )
+          : [...vinculos, novo];
+        setVinculos(updatedVinculos);
+        saveToStorage(vinculosStorageKey, updatedVinculos);
+      }
+    }
+  };
+
+  const handleSaveAtribuicao = () => {
+    if (!disciplinaAulaId || !turmaAulaId || !professorId) {
+      window.alert('Selecione disciplina e turma na secao Aulas e depois escolha o professor.');
+      return;
+    }
+
+    const turmaNome = turmas.find((t) => t.id === turmaAulaId)?.nome ?? '';
+    const professorNome = professores.find((p) => p.id === professorId)?.nome ?? '';
+    const existente = vinculos.find(
+      (v) => v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId,
+    );
+    const novo: DisciplinaVinculo = {
+      disciplinaId: disciplinaAulaId,
+      turmaId: turmaAulaId,
+      turmaNome,
+      professorId,
+      professorNome,
+      alunos: existente?.alunos ?? [],
+    };
+    const updated = existente
+      ? vinculos.map((v) =>
+          v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId ? novo : v,
+        )
+      : [...vinculos, novo];
+
+    setVinculos(updated);
+    saveToStorage(vinculosStorageKey, updated);
+    window.alert('Atribuicao salva com sucesso.');
   };
 
   return (
@@ -190,48 +322,30 @@ const DisciplinasCadastroHorarios: React.FC = () => {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5 text-primary" />
-              Turmas
+              <BookOpen className="w-5 h-5 text-primary" />
+              Atribuir Professor
             </CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]">
+          <CardContent className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
             <div className="space-y-2">
-              <Label htmlFor="nome-turma">Nome da Turma</Label>
-              <Input
-                id="nome-turma"
-                placeholder="Ex: A"
-                value={nomeTurma}
-                onChange={(e) =>
-                  setNomeTurma(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 1))
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ano-serie">Ano/Serie</Label>
-              <Input
-                id="ano-serie"
-                placeholder="Ex: 6"
-                value={anoSerie}
-                onChange={(e) => setAnoSerie(e.target.value.replace(/\D/g, '').slice(0, 2))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="turno">Turno</Label>
-              <Select value={turnoTurma} onValueChange={(v: 'Manha' | 'Tarde' | 'Noite') => setTurnoTurma(v)}>
-                <SelectTrigger id="turno">
-                  <SelectValue />
+              <Label htmlFor="professor-vinculo">Professor</Label>
+              <Select value={professorId} onValueChange={setProfessorId}>
+                <SelectTrigger id="professor-vinculo">
+                  <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Manha">Manha</SelectItem>
-                  <SelectItem value="Tarde">Tarde</SelectItem>
-                  <SelectItem value="Noite">Noite</SelectItem>
+                  {professores.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.nome}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-end">
-              <Button onClick={handleAddTurma}>
+              <Button onClick={handleSaveAtribuicao}>
                 <Plus className="w-4 h-4" />
-                Adicionar
+                Salvar atribuicao
               </Button>
             </div>
           </CardContent>

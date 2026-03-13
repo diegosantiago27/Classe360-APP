@@ -1,16 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Pencil, Plus, Trash2, Link2 } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Link2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { Turma, turmasStorageKey, defaultTurmas } from '@/lib/mockTurmas';
@@ -44,14 +39,12 @@ interface UsuarioApi {
   ativo: boolean;
 }
 
-type Turno = 'Manha' | 'Tarde' | 'Noite';
-
 interface AlunoVinculado {
   alunoId: string;
   alunoNome: string;
-  turno: Turno;
-  ano: string;
-  serie: string;
+  turno?: 'Manha' | 'Tarde' | 'Noite';
+  ano?: string;
+  serie?: string;
 }
 
 interface DisciplinaVinculo {
@@ -90,6 +83,10 @@ const Disciplinas: React.FC = () => {
       .then((data) => {
         if (cancelled || !data) return;
         const content = (data.content ?? data) as UsuarioApi[];
+        const storedUsers = loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers);
+        const turmasPorUsuario = new Map(
+          storedUsers.map((u) => [u.id, u.turmas ?? []]),
+        );
         const mapped: StoredUser[] = content.map((u) => ({
           id: String(u.id),
           cpf: u.cpf ?? '',
@@ -98,6 +95,11 @@ const Disciplinas: React.FC = () => {
           perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
           turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
           status: u.ativo ? 'ativo' : 'inativo',
+          // API pode não retornar turmas; mantém vínculo local para não perder contagem
+          turmas:
+            (u as { turmas?: string[] }).turmas ??
+            turmasPorUsuario.get(String(u.id)) ??
+            [],
         }));
         setUsuarios(mapped);
       })
@@ -107,83 +109,31 @@ const Disciplinas: React.FC = () => {
     };
   }, []);
 
-  const professores = useMemo(
-    () =>
-      usuarios.filter(
-        (u) => u.perfil === UserProfile.PROFESSOR && u.status === 'ativo',
-      ),
-    [usuarios],
-  );
-  const alunos = useMemo(
-    () =>
-      usuarios.filter((u) => u.perfil === UserProfile.ALUNO && u.status === 'ativo'),
-    [usuarios],
-  );
-  const [turmas, setTurmas] = useState<Turma[]>(
+  const [turmas] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
   );
-  const turmasOrdenadas = useMemo(() => {
-    return [...turmas].sort((a, b) => {
-      const numA = parseInt(a.nome.match(/(\d+)/)?.[1] ?? '0', 10);
-      const numB = parseInt(b.nome.match(/(\d+)/)?.[1] ?? '0', 10);
-      if (numA !== numB) return numA - numB;
-      const letraA = a.nome.split(/\s+/).pop() ?? '';
-      const letraB = b.nome.split(/\s+/).pop() ?? '';
-      return letraA.localeCompare(letraB);
-    });
-  }, [turmas]);
-  const [vinculoDialogOpen, setVinculoDialogOpen] = useState(false);
-
-  useEffect(() => {
-    if (vinculoDialogOpen) {
-      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
-    }
-  }, [vinculoDialogOpen]);
-
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [nome, setNome] = useState('');
-  const [disciplinaVinculoId, setDisciplinaVinculoId] = useState<string | null>(null);
-  const [turmaId, setTurmaId] = useState('');
-  const [professorId, setProfessorId] = useState('');
-  const [turno, setTurno] = useState<Turno>('Manha');
-  const [alunosSelecionados, setAlunosSelecionados] = useState<string[]>([]);
 
   const total = useMemo(() => disciplinas.length, [disciplinas]);
   const totalComProfessor = useMemo(
     () => vinculos.filter((v) => Boolean(v.professorId)).length,
     [vinculos],
   );
+  const getAlunosVinculadosCount = (v: DisciplinaVinculo) => {
+    const ids = new Set<string>();
+    (v.alunos ?? []).forEach((a) => ids.add(a.alunoId));
+    usuarios.forEach((u) => {
+      if (u.perfil !== UserProfile.ALUNO || u.status !== 'ativo') return;
+      if ((u.turmas ?? []).includes(v.turmaNome)) {
+        ids.add(u.id);
+      }
+    });
+    return ids.size;
+  };
+
   const totalAlunosVinculados = useMemo(
-    () => vinculos.reduce((acc, item) => acc + item.alunos.length, 0),
-    [vinculos],
+    () => vinculos.reduce((acc, item) => acc + getAlunosVinculadosCount(item), 0),
+    [vinculos, usuarios],
   );
-  const handleOpenEdit = (item: CatalogItem) => {
-    setEditingId(item.id);
-    setNome(item.nome);
-    setDialogOpen(true);
-  };
-
-  const handleSave = (event: React.FormEvent) => {
-    event.preventDefault();
-    const trimmed = nome.trim();
-    if (!trimmed) return;
-
-    if (editingId) {
-      const updated = disciplinas.map((item) =>
-        item.id === editingId ? { ...item, nome: trimmed } : item,
-      );
-      setDisciplinas(updated);
-      saveToStorage(disciplinasStorageKey, updated);
-    } else {
-      const updated = [{ id: createId('disciplina'), nome: trimmed }, ...disciplinas];
-      setDisciplinas(updated);
-      saveToStorage(disciplinasStorageKey, updated);
-    }
-
-    setDialogOpen(false);
-  };
-
   const handleDelete = (item: CatalogItem) => {
     const confirmed = window.confirm(`Deseja remover a disciplina "${item.nome}"?`);
     if (!confirmed) return;
@@ -195,67 +145,19 @@ const Disciplinas: React.FC = () => {
   const getVinculos = (disciplinaId: string) =>
     vinculos.filter((v) => v.disciplinaId === disciplinaId);
 
-  const handleOpenVinculo = (disciplinaId: string) => {
-    setDisciplinaVinculoId(disciplinaId);
-    setTurmaId('');
-    setProfessorId('');
-    setTurno('Manha');
-    setAlunosSelecionados([]);
-    setVinculoDialogOpen(true);
-  };
-
-  const handleTurmaChange = (id: string) => {
-    setTurmaId(id);
-    const turma = turmas.find((t) => t.id === id);
-    if (turma) {
-      setTurno(turma.turno);
+  const getTurnoAnoSerie = (v: DisciplinaVinculo) => {
+    const turma = turmas.find((t) => t.id === v.turmaId);
+    const anoMatch = turma?.nome.match(/(\d+)/);
+    const ano = anoMatch ? anoMatch[1] : '';
+    const letraSerie = turma?.nome.split(/\s+/).pop() ?? '';
+    const turno = turma?.turno ?? '';
+    const a = v.alunos[0];
+    const temDadosAluno = a && a.turno != null && a.ano != null && a.serie != null;
+    if (temDadosAluno) {
+      return `${a.turno} - ${a.ano} - ${a.serie}`;
     }
-  };
-
-  const toggleAluno = (alunoId: string) => {
-    setAlunosSelecionados((prev) =>
-      prev.includes(alunoId) ? prev.filter((id) => id !== alunoId) : [...prev, alunoId],
-    );
-  };
-
-  const handleSaveVinculo = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!disciplinaVinculoId) return;
-    if (!turmaId) return;
-    if (!professorId) return;
-
-    const turmaNome = turmas.find((t) => t.id === turmaId)?.nome ?? '';
-    const professorNome = professores.find((p) => p.id === professorId)?.nome ?? '';
-    const anoAtual = new Date().getFullYear().toString();
-    const alunosVinculados: AlunoVinculado[] = alunosSelecionados.map((id) => ({
-      alunoId: id,
-      alunoNome: alunos.find((a) => a.id === id)?.nome ?? '',
-      turno,
-      ano: anoAtual,
-      serie: turmaNome,
-    }));
-
-    const novo: DisciplinaVinculo = {
-      disciplinaId: disciplinaVinculoId,
-      turmaId,
-      turmaNome,
-      professorId,
-      professorNome,
-      alunos: alunosVinculados,
-    };
-
-    const existente = vinculos.find(
-      (v) => v.disciplinaId === disciplinaVinculoId && v.turmaId === turmaId,
-    );
-    const updated = existente
-      ? vinculos.map((v) =>
-          v.disciplinaId === disciplinaVinculoId && v.turmaId === turmaId ? novo : v,
-        )
-      : [...vinculos, novo];
-
-    setVinculos(updated);
-    saveToStorage(vinculosStorageKey, updated);
-    setVinculoDialogOpen(false);
+    if (!turma) return '-';
+    return `${turno} - ${ano} - ${letraSerie}`;
   };
 
   return (
@@ -343,14 +245,12 @@ const Disciplinas: React.FC = () => {
                           </p>
                           <p>
                             Alunos vinculados:{' '}
-                            <span className="text-foreground font-medium">{v.alunos.length}</span>
+                            <span className="text-foreground font-medium">{getAlunosVinculadosCount(v)}</span>
                           </p>
                           <p>
                             Turno/Ano/Serie:{' '}
                             <span className="text-foreground font-medium">
-                              {v.alunos[0]
-                                ? `${v.alunos[0].turno} - ${v.alunos[0].ano} - ${v.alunos[0].serie}`
-                                : '-'}
+                              {getTurnoAnoSerie(v)}
                             </span>
                           </p>
                         </div>
@@ -359,18 +259,6 @@ const Disciplinas: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {podeGerenciar && (
-                      <Button size="sm" variant="secondary" onClick={() => handleOpenVinculo(item.id)}>
-                        <Link2 className="w-4 h-4" />
-                        Atribuir
-                      </Button>
-                    )}
-                    {podeGerenciar && (
-                      <Button size="sm" variant="outline" onClick={() => handleOpenEdit(item)}>
-                        <Pencil className="w-4 h-4" />
-                        Editar
-                      </Button>
-                    )}
                     {podeRemoverDisciplina && (
                       <Button size="sm" variant="destructive" onClick={() => handleDelete(item)}>
                         <Trash2 className="w-4 h-4" />
@@ -383,93 +271,6 @@ const Disciplinas: React.FC = () => {
           </div>
         )}
       </div>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Editar disciplina</DialogTitle>
-            <DialogDescription>
-              Informe o nome da disciplina conforme cadastro institucional.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="nome">Nome</Label>
-              <Input
-                id="nome"
-                value={nome}
-                onChange={(event) => setNome(event.target.value)}
-                placeholder="Ex: Matematica"
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="gradient">
-                Salvar
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={vinculoDialogOpen} onOpenChange={setVinculoDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Vincular professor e alunos</DialogTitle>
-            <DialogDescription>
-              Defina professor da disciplina e vincule alunos ao turno.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSaveVinculo} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="turma">Turma *</Label>
-                <Select value={turmaId} onValueChange={handleTurmaChange}>
-                  <SelectTrigger id="turma">
-                    <SelectValue placeholder="Selecione a turma" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {turmasOrdenadas.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.nome} ({t.turno})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="professor">Professor *</Label>
-                <Select value={professorId} onValueChange={setProfessorId}>
-                  <SelectTrigger id="professor">
-                    <SelectValue placeholder="Selecione um professor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {professores.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-            </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setVinculoDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="gradient">
-                Salvar atribuicoes
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </DashboardLayout>
   );
 };

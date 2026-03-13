@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const getSerieNumero = (nomeTurma: string) => nomeTurma.match(/(\d+)/)?.[1] ?? '';
 
 interface UsuarioApi {
   id: number;
@@ -78,6 +79,8 @@ const TurmaDetalhe: React.FC = () => {
       .then((data) => {
         if (cancelled || !data) return;
         const content = (data.content ?? data) as UsuarioApi[];
+        const storedUsers = loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers);
+        const turmasPorUsuario = new Map(storedUsers.map((u) => [u.id, u.turmas ?? []]));
         const mapped: StoredUser[] = content.map((u) => ({
           id: String(u.id),
           cpf: u.cpf ?? '',
@@ -86,7 +89,10 @@ const TurmaDetalhe: React.FC = () => {
           perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
           turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
           status: u.ativo ? 'ativo' : 'inativo',
-          turmas: (u as { turmas?: string[] }).turmas ?? [],
+          turmas:
+            (u as { turmas?: string[] }).turmas ??
+            turmasPorUsuario.get(String(u.id)) ??
+            [],
         }));
         setUsuarios(mapped);
       })
@@ -197,10 +203,42 @@ const TurmaDetalhe: React.FC = () => {
     () => new Set(alunosDaTurma.map((a) => a.id)),
     [alunosDaTurma],
   );
+  const turmasPorAlunoId = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    usuarios.forEach((u) => {
+      if (u.perfil !== UserProfile.ALUNO) return;
+      const set = map.get(u.id) ?? new Set<string>();
+      (u.turmas ?? []).forEach((nome) => {
+        if (nome?.trim()) set.add(nome.trim());
+      });
+      map.set(u.id, set);
+    });
+
+    vinculos.forEach((v) => {
+      const turmaNome = turmas.find((t) => t.id === v.turmaId)?.nome;
+      if (!turmaNome) return;
+      v.alunos.forEach((a) => {
+        const set = map.get(a.alunoId) ?? new Set<string>();
+        set.add(turmaNome);
+        map.set(a.alunoId, set);
+      });
+    });
+
+    return map;
+  }, [usuarios, vinculos, turmas]);
 
   const handleVincularAluno = (aluno: StoredUser) => {
     if (!turma) return;
     if (idsAlunosDaTurma.has(aluno.id)) return;
+    const turmaConflitante = Array.from(turmasPorAlunoId.get(aluno.id) ?? []).find(
+      (nomeTurma) => nomeTurma !== turma.nome,
+    );
+    if (turmaConflitante) {
+      window.alert(
+        `${aluno.nome} ja esta vinculado na turma ${turmaConflitante}. Use a opcao Migrar.`,
+      );
+      return;
+    }
 
     const updatedUsuarios = usuarios.map((u) => {
       if (u.id !== aluno.id) return u;
@@ -446,19 +484,28 @@ const TurmaDetalhe: React.FC = () => {
                 <p className="text-sm font-medium">Resultados para vincular</p>
                 {resultadosBuscaVinculacao.map((aluno) => {
                   const vinculado = idsAlunosDaTurma.has(aluno.id);
+                  const turmaAtualAluno = Array.from(turmasPorAlunoId.get(aluno.id) ?? []).find(
+                    (nomeTurma) => nomeTurma !== turma.nome,
+                  );
+                  const bloqueadoPorOutraTurma = Boolean(turmaAtualAluno);
                   return (
                     <div key={aluno.id} className="flex items-center justify-between gap-2 text-sm">
                       <div>
                         <p className="font-medium">{aluno.nome}</p>
                         <p className="text-muted-foreground">{aluno.cpf}</p>
+                        {turmaAtualAluno && (
+                          <p className="text-amber-600">
+                            Ja vinculado a outra turma: {turmaAtualAluno}
+                          </p>
+                        )}
                       </div>
                       <Button
                         size="sm"
-                        variant={vinculado ? 'secondary' : 'outline'}
-                        disabled={vinculado}
+                        variant={vinculado || bloqueadoPorOutraTurma ? 'secondary' : 'outline'}
+                        disabled={vinculado || bloqueadoPorOutraTurma}
                         onClick={() => handleVincularAluno(aluno)}
                       >
-                        {vinculado ? 'Ja vinculado' : 'Vincular'}
+                        {vinculado ? 'Ja vinculado' : bloqueadoPorOutraTurma ? 'Indisponivel' : 'Vincular'}
                       </Button>
                     </div>
                   );
