@@ -27,7 +27,23 @@ interface Lancamento {
   status: LancamentoStatus;
 }
 
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+}
+
 const storageKey = 'school-compass:notas';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
 
 const defaultLancamentos: Lancamento[] = [
   {
@@ -67,6 +83,9 @@ const defaultLancamentos: Lancamento[] = [
 
 const Notas: React.FC = () => {
   const { user } = useAuth();
+  const ehProfessor =
+    user?.perfil === UserProfile.PROFESSOR ||
+    String((user as { role?: unknown } | null)?.role ?? '').toUpperCase() === 'ROLE_PROFESSOR';
   const somenteConsulta =
     user?.perfil === UserProfile.SECRETARIA || user?.perfil === UserProfile.PROFESSOR;
   const [lancamentos, setLancamentos] = useState<Lancamento[]>(
@@ -83,6 +102,7 @@ const Notas: React.FC = () => {
   });
   const [disciplinaSelecionada, setDisciplinaSelecionada] = useState<string>('todas');
   const [bimestreSelecionado, setBimestreSelecionado] = useState<string>('todos');
+  const [turmaSelecionada, setTurmaSelecionada] = useState<string>('todas');
   const [turnoSelecionado, setTurnoSelecionado] = useState<string>('todos');
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
@@ -92,30 +112,79 @@ const Notas: React.FC = () => {
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
     [],
   );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+    [],
+  );
+  const professorVinculos = useMemo(() => {
+    if (!ehProfessor || !user?.id) return [];
+    return vinculos.filter((v) => v.professorId === user.id);
+  }, [ehProfessor, user?.id, vinculos]);
   const turnoPorTurma = useMemo(
     () => new Map(turmasDisponiveis.map((turma) => [turma.nome, turma.turno])),
     [turmasDisponiveis],
   );
-  const disciplinaOptions = useMemo(
-    () => disciplinasDisponiveis.map((item) => item.nome),
+  const disciplinaNomePorId = useMemo(
+    () => new Map(disciplinasDisponiveis.map((item) => [item.id, item.nome])),
     [disciplinasDisponiveis],
   );
+  const paresVinculadosProfessor = useMemo(() => {
+    return new Set(
+      professorVinculos.map((v) => {
+        const disciplinaNome = disciplinaNomePorId.get(v.disciplinaId) ?? '';
+        const turmaNome =
+          turmasDisponiveis.find((t) => t.id === v.turmaId)?.nome ??
+          v.turmaNome ??
+          v.turmaId;
+        return `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}`;
+      }),
+    );
+  }, [professorVinculos, disciplinaNomePorId, turmasDisponiveis]);
+  const lancamentosVisiveis = useMemo(() => {
+    if (!ehProfessor) return lancamentos;
+    return lancamentos.filter((item) =>
+      paresVinculadosProfessor.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
+    );
+  }, [ehProfessor, lancamentos, paresVinculadosProfessor]);
+  const disciplinaOptions = useMemo(
+    () => {
+      if (!ehProfessor) return disciplinasDisponiveis.map((item) => item.nome);
+      const nomes = professorVinculos
+        .map((v) => disciplinaNomePorId.get(v.disciplinaId) ?? '')
+        .filter(Boolean);
+      return Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    },
+    [ehProfessor, disciplinasDisponiveis, professorVinculos, disciplinaNomePorId],
+  );
+  const turmaOptions = useMemo(() => {
+    if (!ehProfessor) {
+      return turmasDisponiveis
+        .map((item) => item.nome)
+        .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+    const nomes = professorVinculos
+      .map((v) => turmasDisponiveis.find((t) => t.id === v.turmaId)?.nome ?? v.turmaNome ?? '')
+      .filter(Boolean);
+    return Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [ehProfessor, professorVinculos, turmasDisponiveis]);
   const bimestreOptions = useMemo(
     () => ['1º Bimestre', '2º Bimestre', '3º Bimestre', '4º Bimestre'],
     [],
   );
 
   const lancamentosFiltrados = useMemo(() => {
-    return lancamentos.filter((item) => {
+    return lancamentosVisiveis.filter((item) => {
       const matchDisciplina =
         disciplinaSelecionada === 'todas' || item.disciplina === disciplinaSelecionada;
       const matchBimestre =
         bimestreSelecionado === 'todos' || item.bimestre === bimestreSelecionado;
+      const matchTurma =
+        turmaSelecionada === 'todas' || item.turma === turmaSelecionada;
       const matchTurno =
         turnoSelecionado === 'todos' || turnoPorTurma.get(item.turma) === turnoSelecionado;
-      return matchDisciplina && matchBimestre && matchTurno;
+      return matchDisciplina && matchBimestre && matchTurma && matchTurno;
     });
-  }, [lancamentos, disciplinaSelecionada, bimestreSelecionado, turnoSelecionado, turnoPorTurma]);
+  }, [lancamentosVisiveis, disciplinaSelecionada, bimestreSelecionado, turmaSelecionada, turnoSelecionado, turnoPorTurma]);
 
   const pendentes = useMemo(
     () => lancamentosFiltrados.filter((item) => item.status === 'Pendente').length,
@@ -310,6 +379,24 @@ const Notas: React.FC = () => {
                     <SelectItem value="Manha">Manha</SelectItem>
                     <SelectItem value="Tarde">Tarde</SelectItem>
                     <SelectItem value="Noite">Noite</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="max-w-xs">
+                <Label htmlFor="filtro-turma" className="text-xs text-muted-foreground">
+                  Filtrar por turma
+                </Label>
+                <Select value={turmaSelecionada} onValueChange={setTurmaSelecionada}>
+                  <SelectTrigger id="filtro-turma">
+                    <SelectValue placeholder="Todas as turmas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as turmas</SelectItem>
+                    {turmaOptions.map((turma) => (
+                      <SelectItem key={turma} value={turma}>
+                        {turma}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

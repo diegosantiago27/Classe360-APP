@@ -36,6 +36,8 @@ interface AtividadeQuestion {
 
 interface Atividade {
   id: string;
+  professorId?: string;
+  professorNome?: string;
   titulo: string;
   turma: string;
   disciplina: string;
@@ -142,6 +144,11 @@ const Atividades: React.FC = () => {
   const [searchParams] = useSearchParams();
   const disciplinaInicial = searchParams.get('disciplina') ?? 'todas';
   const isAluno = user?.perfil === UserProfile.ALUNO;
+  const isProfessor =
+    user?.perfil === UserProfile.PROFESSOR ||
+    String((user as { role?: unknown } | null)?.role ?? '')
+      .trim()
+      .toUpperCase() === 'ROLE_PROFESSOR';
   const [atividades, setAtividades] = useState<Atividade[]>(
     () => loadFromStorage<Atividade[]>(storageKey, defaultAtividades),
   );
@@ -204,10 +211,15 @@ const Atividades: React.FC = () => {
   const hasDisciplinas = disciplinaOptions.length > 0;
   const hasPeriodos = periodoOptions.length > 0;
 
+  const atividadesVisiveis = useMemo(() => {
+    if (!isProfessor || !user?.id) return atividades;
+    return atividades.filter((item) => item.professorId === user.id);
+  }, [atividades, isProfessor, user?.id]);
+
   const atividadesFiltradas = useMemo(() => {
-    if (disciplinaSelecionada === 'todas') return atividades;
-    return atividades.filter((item) => item.disciplina === disciplinaSelecionada);
-  }, [atividades, disciplinaSelecionada]);
+    if (disciplinaSelecionada === 'todas') return atividadesVisiveis;
+    return atividadesVisiveis.filter((item) => item.disciplina === disciplinaSelecionada);
+  }, [atividadesVisiveis, disciplinaSelecionada]);
 
   const getEntrega = (atividadeId: string) =>
     entregas.find((item) => item.atividadeId === atividadeId && item.alunoId === user?.id);
@@ -229,10 +241,12 @@ const Atividades: React.FC = () => {
 
   const entregasRecentes = useMemo(() => {
     if (isAluno) return [];
+    const idsAtividadesVisiveis = new Set(atividadesVisiveis.map((item) => item.id));
     return [...entregas]
+      .filter((item) => idsAtividadesVisiveis.has(item.atividadeId))
       .sort((a, b) => b.enviadoEm.localeCompare(a.enviadoEm))
       .slice(0, 5);
-  }, [entregas, isAluno]);
+  }, [entregas, isAluno, atividadesVisiveis]);
 
   const getAtividadeById = (atividadeId: string) =>
     atividades.find((item) => item.id === atividadeId);
@@ -458,7 +472,12 @@ const Atividades: React.FC = () => {
       saveToStorage(storageKey, updated);
     } else {
       const updated = [
-        { id: createId('atividade'), ...normalized },
+        {
+          id: createId('atividade'),
+          professorId: user?.id ?? '',
+          professorNome: user?.nome ?? '',
+          ...normalized,
+        },
         ...atividades,
       ];
       setAtividades(updated);
@@ -535,7 +554,7 @@ const Atividades: React.FC = () => {
                   Total de atividades
                 </CardTitle>
                 <div className="text-2xl font-semibold text-foreground">
-                  {atividades.length}
+                  {atividadesFiltradas.length}
                 </div>
               </div>
               <CalendarClock className="w-5 h-5 text-primary" />

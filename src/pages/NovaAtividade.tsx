@@ -12,12 +12,16 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
 
 interface Atividade {
   id: string;
+  professorId?: string;
+  professorNome?: string;
   titulo: string;
   turma: string;
   disciplina: string;
@@ -55,14 +59,22 @@ interface QuestaoDraft {
 }
 
 const storageKey = 'school-compass:atividades';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+}
 
 const NovaAtividade: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [instituicao] = useState('Colégio Institucional São Paulo');
-  const [disciplina, setDisciplina] = useState('');
-  const [turma, setTurma] = useState('');
+  const [disciplinaId, setDisciplinaId] = useState('');
+  const [turmaId, setTurmaId] = useState('');
   const [turno, setTurno] = useState('');
   const [data, setData] = useState('');
   const [titulo, setTitulo] = useState('');
@@ -88,6 +100,43 @@ const NovaAtividade: React.FC = () => {
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
     [],
+  );
+  const turmasDisponiveis = useMemo(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
+  );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+    [],
+  );
+  const instituicao = useMemo(() => {
+    const dados = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
+    return dados.nome?.trim() || defaultInstituicao.nome;
+  }, []);
+  const professorVinculos = useMemo(() => {
+    if (!user?.id) return [];
+    return vinculos.filter((v) => v.professorId === user.id);
+  }, [vinculos, user?.id]);
+  const disciplinasFiltradas = useMemo(() => {
+    if (professorVinculos.length === 0) return disciplinasDisponiveis;
+    const ids = new Set(professorVinculos.map((v) => v.disciplinaId));
+    return disciplinasDisponiveis.filter((d) => ids.has(d.id));
+  }, [disciplinasDisponiveis, professorVinculos]);
+  const turmasFiltradas = useMemo(() => {
+    if (!disciplinaId) return [];
+    const idsPorVinculo = new Set(
+      professorVinculos
+        .filter((v) => v.disciplinaId === disciplinaId)
+        .map((v) => v.turmaId),
+    );
+    if (idsPorVinculo.size > 0) {
+      return turmasDisponiveis.filter((t) => idsPorVinculo.has(t.id));
+    }
+    return turmasDisponiveis;
+  }, [disciplinaId, professorVinculos, turmasDisponiveis]);
+  const turnoPorTurma = useMemo(
+    () => Object.fromEntries(turmasDisponiveis.map((t) => [t.id, t.turno] as const)),
+    [turmasDisponiveis],
   );
 
   const handleAddQuestao = () => {
@@ -130,8 +179,15 @@ const NovaAtividade: React.FC = () => {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!disciplina || !turma || !data || !titulo.trim()) {
+    if (!disciplinaId || !turmaId || !data || !titulo.trim()) {
       window.alert('Preencha disciplina, turma, data e título.');
+      return;
+    }
+    const disciplinaNome =
+      disciplinasDisponiveis.find((d) => d.id === disciplinaId)?.nome ?? '';
+    const turmaNome = turmasDisponiveis.find((t) => t.id === turmaId)?.nome ?? '';
+    if (!disciplinaNome || !turmaNome) {
+      window.alert('Selecione disciplina e turma válidas.');
       return;
     }
 
@@ -147,9 +203,11 @@ const NovaAtividade: React.FC = () => {
     const stored = loadFromStorage<Atividade[]>(storageKey, []);
     const atividade: Atividade = {
       id: createId('atividade'),
+      professorId: user?.id ?? '',
+      professorNome: user?.nome ?? '',
       titulo,
-      turma,
-      disciplina,
+      turma: turmaNome,
+      disciplina: disciplinaNome,
       periodo: 'Periodo',
       sala: '',
       data,
@@ -201,13 +259,20 @@ const NovaAtividade: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <Label>Disciplina</Label>
-                <Select value={disciplina} onValueChange={setDisciplina}>
+                <Select
+                  value={disciplinaId}
+                  onValueChange={(value) => {
+                    setDisciplinaId(value);
+                    setTurmaId('');
+                    setTurno('');
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione a disciplina" />
                   </SelectTrigger>
                   <SelectContent>
-                    {disciplinasDisponiveis.map((item) => (
-                      <SelectItem key={item.id} value={item.nome}>
+                    {disciplinasFiltradas.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
                         {item.nome}
                       </SelectItem>
                     ))}
@@ -216,15 +281,22 @@ const NovaAtividade: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <Label>Turma / Série</Label>
-                <Select value={turma} onValueChange={setTurma}>
+                <Select
+                  value={turmaId}
+                  onValueChange={(value) => {
+                    setTurmaId(value);
+                    setTurno(turnoPorTurma[value] ?? '');
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione a turma" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="9º Ano A">9º Ano A</SelectItem>
-                    <SelectItem value="9º Ano B">9º Ano B</SelectItem>
-                    <SelectItem value="8º Ano A">8º Ano A</SelectItem>
-                    <SelectItem value="7º Ano C">7º Ano C</SelectItem>
+                    {turmasFiltradas.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.nome}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -235,7 +307,7 @@ const NovaAtividade: React.FC = () => {
                     <SelectValue placeholder="Selecione o turno" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Manhã">Manhã</SelectItem>
+                    <SelectItem value="Manha">Manhã</SelectItem>
                     <SelectItem value="Tarde">Tarde</SelectItem>
                     <SelectItem value="Noite">Noite</SelectItem>
                   </SelectContent>

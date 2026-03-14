@@ -53,6 +53,12 @@ const coresStorageKey = 'school-compass:disciplinas-cores';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
+function formatHorarioInput(value: string): string {
+  const apenasDigitos = value.replace(/\D/g, '').slice(0, 4);
+  if (apenasDigitos.length <= 2) return apenasDigitos;
+  return `${apenasDigitos.slice(0, 2)}:${apenasDigitos.slice(2)}`;
+}
+
 function roleToPerfil(role: string): UserProfile {
   switch (role) {
     case 'ROLE_GESTOR':
@@ -121,11 +127,10 @@ const DisciplinasCadastroHorarios: React.FC = () => {
 
   const [disciplinaAulaId, setDisciplinaAulaId] = useState('');
   const [turmaAulaId, setTurmaAulaId] = useState('');
-  const [diaAula, setDiaAula] = useState('Segunda');
-  const [inicioAula, setInicioAula] = useState('07:30');
-  const [fimAula, setFimAula] = useState('08:20');
+  const [diaAula, setDiaAula] = useState('');
+  const [inicioAula, setInicioAula] = useState('');
+  const [fimAula, setFimAula] = useState('');
 
-  const totalAulas = useMemo(() => aulas.length, [aulas]);
   const professores = useMemo(
     () => usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR && u.status === 'ativo'),
     [usuarios],
@@ -196,7 +201,55 @@ const DisciplinasCadastroHorarios: React.FC = () => {
   };
 
   const handleAddAula = () => {
-    if (!disciplinaAulaId || !turmaAulaId) return;
+    const horarioValido = /^\d{2}:\d{2}$/;
+    if (!disciplinaAulaId || !turmaAulaId || !diaAula || !inicioAula || !fimAula) {
+      window.alert('Preencha disciplina, turma, dia, inicio e fim.');
+      return;
+    }
+    if (!horarioValido.test(inicioAula) || !horarioValido.test(fimAula)) {
+      window.alert('Use o formato de horario HH:MM (ex.: 07:30).');
+      return;
+    }
+    const vinculoAtual = vinculos.find(
+      (v) => v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId,
+    );
+    const professorAssociadoId = professorId || vinculoAtual?.professorId || '';
+
+    const aulaDuplicada = aulas.some(
+      (a) =>
+        a.disciplinaId === disciplinaAulaId &&
+        a.turmaId === turmaAulaId &&
+        a.dia === diaAula &&
+        a.inicio === inicioAula &&
+        a.fim === fimAula,
+    );
+    if (aulaDuplicada) {
+      window.alert('Essa aula ja esta cadastrada para essa turma no mesmo horario.');
+      return;
+    }
+
+    if (professorAssociadoId) {
+      const conflitoMesmoProfessor = aulas.some((a) => {
+        if (
+          a.turmaId !== turmaAulaId ||
+          a.dia !== diaAula ||
+          a.inicio !== inicioAula ||
+          a.fim !== fimAula
+        ) {
+          return false;
+        }
+        const vinculoExistente = vinculos.find(
+          (v) => v.disciplinaId === a.disciplinaId && v.turmaId === a.turmaId,
+        );
+        return vinculoExistente?.professorId === professorAssociadoId;
+      });
+
+      if (conflitoMesmoProfessor) {
+        window.alert('Nao e permitido repetir professor na mesma turma e horario.');
+        return;
+      }
+    }
+
     const nova: AulaCadastrada = {
       id: createId('aula'),
       disciplinaId: disciplinaAulaId,
@@ -235,36 +288,12 @@ const DisciplinasCadastroHorarios: React.FC = () => {
         saveToStorage(vinculosStorageKey, updatedVinculos);
       }
     }
-  };
 
-  const handleSaveAtribuicao = () => {
-    if (!disciplinaAulaId || !turmaAulaId || !professorId) {
-      window.alert('Selecione disciplina e turma na secao Aulas e depois escolha o professor.');
-      return;
-    }
-
-    const turmaNome = turmas.find((t) => t.id === turmaAulaId)?.nome ?? '';
-    const professorNome = professores.find((p) => p.id === professorId)?.nome ?? '';
-    const existente = vinculos.find(
-      (v) => v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId,
-    );
-    const novo: DisciplinaVinculo = {
-      disciplinaId: disciplinaAulaId,
-      turmaId: turmaAulaId,
-      turmaNome,
-      professorId,
-      professorNome,
-      alunos: existente?.alunos ?? [],
-    };
-    const updated = existente
-      ? vinculos.map((v) =>
-          v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId ? novo : v,
-        )
-      : [...vinculos, novo];
-
-    setVinculos(updated);
-    saveToStorage(vinculosStorageKey, updated);
-    window.alert('Atribuicao salva com sucesso.');
+    setDisciplinaAulaId('');
+    setTurmaAulaId('');
+    setDiaAula('');
+    setInicioAula('');
+    setFimAula('');
   };
 
   return (
@@ -326,7 +355,7 @@ const DisciplinasCadastroHorarios: React.FC = () => {
               Atribuir Professor
             </CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
+          <CardContent className="grid grid-cols-1 gap-4">
             <div className="space-y-2">
               <Label htmlFor="professor-vinculo">Professor</Label>
               <Select value={professorId} onValueChange={setProfessorId}>
@@ -341,12 +370,6 @@ const DisciplinasCadastroHorarios: React.FC = () => {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="flex items-end">
-              <Button onClick={handleSaveAtribuicao}>
-                <Plus className="w-4 h-4" />
-                Salvar atribuicao
-              </Button>
             </div>
           </CardContent>
         </Card>
@@ -393,7 +416,7 @@ const DisciplinasCadastroHorarios: React.FC = () => {
               <Label htmlFor="dia-aula">Dia</Label>
               <Select value={diaAula} onValueChange={setDiaAula}>
                 <SelectTrigger id="dia-aula">
-                  <SelectValue />
+                  <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Segunda">Segunda</SelectItem>
@@ -406,11 +429,25 @@ const DisciplinasCadastroHorarios: React.FC = () => {
             </div>
             <div className="space-y-2">
               <Label htmlFor="inicio-aula">Inicio</Label>
-              <Input id="inicio-aula" value={inicioAula} onChange={(e) => setInicioAula(e.target.value)} />
+              <Input
+                id="inicio-aula"
+                value={inicioAula}
+                onChange={(e) => setInicioAula(formatHorarioInput(e.target.value))}
+                placeholder="07:30"
+                inputMode="numeric"
+                maxLength={5}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="fim-aula">Fim</Label>
-              <Input id="fim-aula" value={fimAula} onChange={(e) => setFimAula(e.target.value)} />
+              <Input
+                id="fim-aula"
+                value={fimAula}
+                onChange={(e) => setFimAula(formatHorarioInput(e.target.value))}
+                placeholder="08:20"
+                inputMode="numeric"
+                maxLength={5}
+              />
             </div>
             <div className="flex items-end">
               <Button onClick={handleAddAula}>
@@ -423,9 +460,9 @@ const DisciplinasCadastroHorarios: React.FC = () => {
 
         <div className="flex justify-center">
           <Button asChild variant="gradient">
-            <Link to="/materiais">
+            <Link to="/agenda-semanal">
               <CalendarDays className="w-4 h-4" />
-              Ver Grade Completa ({totalAulas})
+              Ver Grade Completa
             </Link>
           </Button>
         </div>

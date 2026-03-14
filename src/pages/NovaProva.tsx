@@ -18,6 +18,7 @@ import {
   disciplinasStorageKey,
   periodosStorageKey,
 } from '@/lib/mockAcademics';
+import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
 
@@ -59,7 +60,6 @@ const NovaProva: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [instituicao] = useState('Colégio Institucional São Paulo');
   const [disciplina, setDisciplina] = useState('');
   const [turma, setTurma] = useState('');
   const [turno, setTurno] = useState('');
@@ -88,6 +88,10 @@ const NovaProva: React.FC = () => {
     () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
     [],
   );
+  const instituicao = useMemo(() => {
+    const dados = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
+    return dados.nome?.trim() || defaultInstituicao.nome;
+  }, []);
 
   const handleAddQuestao = () => {
     setQuestoes((prev) => [

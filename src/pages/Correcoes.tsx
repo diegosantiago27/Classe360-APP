@@ -12,6 +12,8 @@ import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/contexts/AuthContext';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { loadFromStorage } from '@/lib/mockStorage';
+import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { UserProfile } from '@/types/auth';
 
 const normalizeText = (value: string) =>
@@ -30,6 +32,31 @@ const getTurmaKey = (value: string) => {
   return normalized.replace(/[^a-z0-9]/g, '');
 };
 
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+}
+
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const atividadesStorageKey = 'school-compass:atividades';
+const entregasStorageKey = 'school-compass:atividades-entregas';
+
+interface Atividade {
+  id: string;
+  turma: string;
+  disciplina: string;
+  turno?: string;
+}
+
+interface AtividadeEntrega {
+  atividadeId: string;
+  alunoId: string;
+  alunoNome?: string;
+}
+
 export default function Correcoes() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -45,26 +72,117 @@ export default function Correcoes() {
     () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
     [],
   );
+  const disciplinas = useMemo(
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    [],
+  );
+  const turmas = useMemo(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
+  );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+    [],
+  );
+  const atividades = useMemo(
+    () => loadFromStorage<Atividade[]>(atividadesStorageKey, []),
+    [],
+  );
+  const entregasAtividades = useMemo(
+    () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
+    [],
+  );
 
   const professorLogado = useMemo(() => {
     if (!user) return null;
     return usuarios.find((item) => item.id === user.id) ?? null;
   }, [usuarios, user]);
 
-  const materiasDisponiveis = professorLogado?.materias ?? [];
-  const turmasDisponiveis = professorLogado?.turmas ?? [];
+  const vinculosProfessor = useMemo(() => {
+    if (!user?.id) return [];
+    return vinculos.filter((v) => v.professorId === user.id);
+  }, [vinculos, user?.id]);
+
+  const materiasDisponiveis = useMemo(() => {
+    if (vinculosProfessor.length > 0) {
+      const ids = Array.from(new Set(vinculosProfessor.map((v) => v.disciplinaId)));
+      return ids
+        .map((id) => disciplinas.find((d) => d.id === id)?.nome)
+        .filter((nome): nome is string => Boolean(nome))
+        .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+    return professorLogado?.materias ?? [];
+  }, [vinculosProfessor, disciplinas, professorLogado]);
+
+  const turmasDisponiveis = useMemo(() => {
+    if (vinculosProfessor.length > 0) {
+      const porId = new Set(vinculosProfessor.map((v) => v.turmaId));
+      const nomesPorId = turmas
+        .filter((t) => porId.has(t.id))
+        .map((t) => t.nome);
+      if (nomesPorId.length > 0) {
+        return Array.from(new Set(nomesPorId)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      }
+      const nomesVinculo = vinculosProfessor.map((v) => v.turmaNome).filter(Boolean);
+      return Array.from(new Set(nomesVinculo)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+    return professorLogado?.turmas ?? [];
+  }, [vinculosProfessor, turmas, professorLogado]);
 
   const alunosDisponiveis = useMemo(() => {
+    const turmaFiltro = getTurmaKey(turma);
+    const turnoFiltro = normalizeText(turno);
     const alunos = usuarios.filter(
       (item) => item.perfil === UserProfile.ALUNO && item.status === 'ativo',
     );
-    const turmaFiltro = getTurmaKey(turma);
-    const turnoFiltro = normalizeText(turno);
+
+    if (tipoCorrecao === 'atividades') {
+      const atividadesFiltradas = atividades.filter((item) => {
+        if (turma && getTurmaKey(item.turma) !== turmaFiltro) return false;
+        if (materia && normalizeText(item.disciplina) !== normalizeText(materia)) return false;
+        if (turno && item.turno && normalizeText(item.turno) !== turnoFiltro) return false;
+        return true;
+      });
+      const atividadeIds = new Set(atividadesFiltradas.map((item) => item.id));
+      const atividadesPorId = new Map(atividadesFiltradas.map((item) => [item.id, item]));
+      const alunosPorId = new Map<
+        string,
+        { id: string; nome: string; email: string }
+      >();
+
+      entregasAtividades
+        .filter((entrega) => atividadeIds.has(entrega.atividadeId))
+        .forEach((entrega) => {
+          const usuarioAluno = alunos.find((item) => item.id === entrega.alunoId);
+          if (turno) {
+            const turnoAluno = usuarioAluno?.turno;
+            const turnoAtividade = atividadesPorId.get(entrega.atividadeId)?.turno;
+            const turnoBase = turnoAluno || turnoAtividade;
+            if (turnoBase && normalizeText(turnoBase) !== turnoFiltro) {
+              return;
+            }
+          }
+          if (!alunosPorId.has(entrega.alunoId)) {
+            alunosPorId.set(entrega.alunoId, {
+              id: entrega.alunoId,
+              nome: usuarioAluno?.nome ?? entrega.alunoNome ?? `Aluno ${entrega.alunoId}`,
+              email: usuarioAluno?.email ?? 'Sem e-mail',
+            });
+          }
+        });
+
+      return Array.from(alunosPorId.values()).sort((a, b) =>
+        a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }),
+      );
+    }
+
     return alunos
       .filter((item) => {
         if (!turma) return true;
-        // suporta variações em formatos (ex.: "9º Ano A" vs "9a")
-        return getTurmaKey(item.turma ?? '') === turmaFiltro;
+        // suporta estruturas antigas (item.turma) e atuais (item.turmas[])
+        const turmaLegada = getTurmaKey((item as { turma?: string }).turma ?? '');
+        const turmasVinculadas = (item.turmas ?? []).map((value) => getTurmaKey(value));
+        return turmaLegada === turmaFiltro || turmasVinculadas.includes(turmaFiltro);
       })
       .filter((item) => {
         if (!turno) return true;
@@ -72,7 +190,7 @@ export default function Correcoes() {
         return normalizeText(item.turno ?? '') === turnoFiltro;
       })
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
-  }, [usuarios, turma, turno]);
+  }, [usuarios, turma, turno, tipoCorrecao, atividades, entregasAtividades, materia]);
 
   const podePesquisar = Boolean(tipoCorrecao && turno && materia && turma);
 

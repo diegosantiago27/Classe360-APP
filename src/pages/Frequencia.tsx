@@ -1,18 +1,22 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarCheck, Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { cn } from '@/lib/utils';
 
 type PresencaStatus = 'Presente' | 'Falta';
 
 const storageKey = 'school-compass:frequencia';
 const presencasStorageKey = 'school-compass:frequencia-diaria';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 
 interface AlunoTurma {
   id: string;
@@ -29,6 +33,20 @@ interface RegistroPresenca {
   status: PresencaStatus;
 }
 
+interface AlunoVinculado {
+  alunoId: string;
+  alunoNome: string;
+}
+
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  alunos: AlunoVinculado[];
+}
+
 const defaultAlunos: AlunoTurma[] = [
   { id: 'AL-9A-1', nome: 'Pedro Oliveira', turma: '9º Ano A' },
   { id: 'AL-9A-2', nome: 'Maria Souza', turma: '9º Ano A' },
@@ -36,31 +54,145 @@ const defaultAlunos: AlunoTurma[] = [
   { id: 'AL-8A-1', nome: 'Lucia Ferreira', turma: '8º Ano A' },
 ];
 
-const disciplinasDisponiveis = ['Matemática', 'Português', 'Física', 'História'];
+function normalizeText(value?: string): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isProfessorPerfil(perfil: unknown): boolean {
+  if (perfil === UserProfile.PROFESSOR) return true;
+  const normalized = String(perfil ?? '').trim().toUpperCase();
+  return normalized === '3' || normalized === 'PROFESSOR' || normalized === 'ROLE_PROFESSOR';
+}
+
+function isSecretariaPerfil(perfil: unknown): boolean {
+  if (perfil === UserProfile.SECRETARIA) return true;
+  const normalized = String(perfil ?? '').trim().toUpperCase();
+  return normalized === '5' || normalized === 'SECRETARIA' || normalized === 'ROLE_SECRETARIA';
+}
+
+function toISODateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 const Frequencia: React.FC = () => {
   const { user } = useAuth();
-  const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
+  const perfilAtual = (user as { perfil?: unknown; role?: unknown } | null)?.perfil
+    ?? (user as { perfil?: unknown; role?: unknown } | null)?.role;
+  const somenteConsulta = isSecretariaPerfil(perfilAtual);
+  const ehProfessor = isProfessorPerfil(perfilAtual);
+  const [usuarios] = useState<StoredUser[]>(() =>
+    loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+  );
+  const [disciplinasCatalogo] = useState<CatalogItem[]>(() =>
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+  );
+  const [vinculos] = useState<DisciplinaVinculo[]>(() =>
+    loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+  );
   const [presencas, setPresencas] = useState<RegistroPresenca[]>(() =>
     loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
   );
-  const [turmaSelecionada, setTurmaSelecionada] = useState(defaultAlunos[0]?.turma ?? '9º Ano A');
-  const [disciplinaSelecionada, setDisciplinaSelecionada] = useState(
-    disciplinasDisponiveis[0] ?? 'Matemática',
-  );
+  const [turmaSelecionada, setTurmaSelecionada] = useState('');
+  const [disciplinaSelecionadaId, setDisciplinaSelecionadaId] = useState('');
   const [dataSelecionada, setDataSelecionada] = useState(new Date());
 
-  const turmasDisponiveis = useMemo(
-    () => Array.from(new Set(defaultAlunos.map((item) => item.turma))).sort(),
-    [],
-  );
+  const professorVinculos = useMemo(() => {
+    if (!ehProfessor || !user) return [];
+    const idAtual = normalizeText(user.id);
+    if (!idAtual) return [];
+    return vinculos.filter((v) => normalizeText(v.professorId) === idAtual);
+  }, [ehProfessor, user, vinculos]);
+
+  const disciplinasDisponiveis = useMemo(() => {
+    if (ehProfessor) {
+      const ids = Array.from(new Set(professorVinculos.map((v) => v.disciplinaId)));
+      return ids
+        .map((id) => disciplinasCatalogo.find((d) => d.id === id))
+        .filter((item): item is CatalogItem => Boolean(item))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    }
+    return [...disciplinasCatalogo].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [ehProfessor, professorVinculos, disciplinasCatalogo]);
+
+  const turmasDisponiveis = useMemo(() => {
+    if (ehProfessor) {
+      const turmasDoProfessor = professorVinculos.map((v) => v.turmaNome || v.turmaId);
+      return Array.from(new Set(turmasDoProfessor)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+
+    const turmasAlunos = usuarios
+      .filter((u) => u.perfil === UserProfile.ALUNO && u.status === 'ativo')
+      .flatMap((u) => u.turmas ?? []);
+    const base = turmasAlunos.length > 0 ? turmasAlunos : defaultAlunos.map((item) => item.turma);
+    return Array.from(new Set(base)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [ehProfessor, professorVinculos, usuarios]);
+
+  useEffect(() => {
+    if (disciplinasDisponiveis.length === 0) {
+      setDisciplinaSelecionadaId('');
+      return;
+    }
+    const existeSelecionada = disciplinasDisponiveis.some((d) => d.id === disciplinaSelecionadaId);
+    if (!existeSelecionada) {
+      setDisciplinaSelecionadaId(disciplinasDisponiveis[0].id);
+    }
+  }, [disciplinasDisponiveis, disciplinaSelecionadaId]);
+
+  useEffect(() => {
+    if (turmasDisponiveis.length === 0) {
+      setTurmaSelecionada('');
+      return;
+    }
+    if (!turmasDisponiveis.includes(turmaSelecionada)) {
+      setTurmaSelecionada(turmasDisponiveis[0]);
+    }
+  }, [turmasDisponiveis, turmaSelecionada]);
 
   const alunosDaTurma = useMemo(() => {
-    return defaultAlunos.filter((item) => item.turma === turmaSelecionada);
-  }, [turmaSelecionada]);
+    if (!turmaSelecionada) return [];
+
+    if (ehProfessor) {
+      const vinculoSelecionado = professorVinculos.find(
+        (v) =>
+          v.disciplinaId === disciplinaSelecionadaId &&
+          (v.turmaNome === turmaSelecionada || v.turmaId === turmaSelecionada),
+      );
+      if (vinculoSelecionado?.alunos?.length) {
+        return [...vinculoSelecionado.alunos]
+          .map((a) => ({ id: a.alunoId, nome: a.alunoNome, turma: turmaSelecionada }))
+          .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      }
+    }
+
+    const alunosDoStorage = usuarios
+      .filter(
+        (u) =>
+          u.perfil === UserProfile.ALUNO &&
+          u.status === 'ativo' &&
+          (u.turmas ?? []).includes(turmaSelecionada),
+      )
+      .map((u) => ({
+        id: u.id,
+        nome: u.nome,
+        turma: turmaSelecionada,
+      }));
+
+    const base = alunosDoStorage.length > 0
+      ? alunosDoStorage
+      : defaultAlunos.filter((item) => item.turma === turmaSelecionada);
+
+    return [...base].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [ehProfessor, professorVinculos, disciplinaSelecionadaId, usuarios, turmaSelecionada]);
 
   const dataSelecionadaISO = useMemo(
-    () => dataSelecionada.toISOString().slice(0, 10),
+    () => toISODateLocal(dataSelecionada),
     [dataSelecionada],
   );
 
@@ -139,21 +271,18 @@ const Frequencia: React.FC = () => {
     (aluno) => statusPorAluno.get(aluno.id) === 'Falta',
   ).length;
 
-  const dataLabel = useMemo(() => {
-    return new Intl.DateTimeFormat('pt-BR', {
-      weekday: 'long',
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    }).format(dataSelecionada);
-  }, [dataSelecionada]);
-
   const handleDataAnterior = () => {
     setDataSelecionada((prev) => new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() - 1));
   };
 
   const handleDataProxima = () => {
     setDataSelecionada((prev) => new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1));
+  };
+
+  const handleDataDireta = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return;
+    setDataSelecionada(new Date(year, month - 1, day));
   };
 
   return (
@@ -185,14 +314,14 @@ const Frequencia: React.FC = () => {
               ))}
             </SelectContent>
           </Select>
-          <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
+          <Select value={disciplinaSelecionadaId} onValueChange={setDisciplinaSelecionadaId}>
             <SelectTrigger className="w-full lg:w-56">
               <SelectValue placeholder="Selecione a disciplina" />
             </SelectTrigger>
             <SelectContent>
               {disciplinasDisponiveis.map((disciplina) => (
-                <SelectItem key={disciplina} value={disciplina}>
-                  {disciplina}
+                <SelectItem key={disciplina.id} value={disciplina.id}>
+                  {disciplina.nome}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -201,9 +330,13 @@ const Frequencia: React.FC = () => {
             <Button variant="ghost" size="icon" onClick={handleDataAnterior}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
-            <span className="flex-1 text-center text-sm font-medium text-foreground capitalize">
-              {dataLabel}
-            </span>
+            <Input
+              type="date"
+              value={dataSelecionadaISO}
+              onChange={(event) => handleDataDireta(event.target.value)}
+              className="h-8 w-[170px]"
+              aria-label="Selecionar data da frequencia"
+            />
             <Button variant="ghost" size="icon" onClick={handleDataProxima}>
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -253,6 +386,9 @@ const Frequencia: React.FC = () => {
             return (
               <div key={aluno.id} className="flex flex-col gap-3 p-4 md:flex-row md:items-center">
                 <div className="flex items-center gap-3 flex-1">
+                  <div className="min-w-7 text-center text-sm font-semibold text-muted-foreground">
+                    {String(index + 1).padStart(2, '0')}
+                  </div>
                   <div className="h-10 w-10 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-semibold">
                     {aluno.nome
                       .split(' ')

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CalendarClock, Send } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -39,6 +39,10 @@ interface AtividadeEntrega {
   alunoNome: string;
   disciplina: string;
   resposta: string;
+  respostasObjetivas?: Array<{
+    questaoId: string;
+    alternativaIndex: number;
+  }>;
   linkAnexo?: string;
   enviadoEm: string;
   nota?: number | null;
@@ -53,6 +57,7 @@ const AtividadeRealizar: React.FC = () => {
   const { user } = useAuth();
   const [resposta, setResposta] = useState('');
   const [linkAnexo, setLinkAnexo] = useState('');
+  const [respostasMultipla, setRespostasMultipla] = useState<Record<string, number>>({});
 
   const atividade = useMemo(() => {
     const atividades = loadFromStorage<Atividade[]>(atividadesStorageKey, []);
@@ -72,8 +77,13 @@ const AtividadeRealizar: React.FC = () => {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!atividade || !user) return;
-    if (!resposta.trim() && !linkAnexo.trim()) {
-      window.alert('Informe uma resposta ou anexe um link.');
+    const respostasObjetivas = Object.entries(respostasMultipla).map(([questaoId, alternativaIndex]) => ({
+      questaoId,
+      alternativaIndex,
+    }));
+    const temObjetivaSelecionada = respostasObjetivas.length > 0;
+    if (!resposta.trim() && !linkAnexo.trim() && !temObjetivaSelecionada) {
+      window.alert('Informe uma resposta, marque alternativas ou anexe um link.');
       return;
     }
 
@@ -84,6 +94,7 @@ const AtividadeRealizar: React.FC = () => {
       alunoNome: user.nome,
       disciplina: atividade.disciplina,
       resposta: resposta.trim(),
+      respostasObjetivas,
       linkAnexo: linkAnexo.trim(),
       enviadoEm: new Date().toISOString(),
     };
@@ -99,10 +110,17 @@ const AtividadeRealizar: React.FC = () => {
     navigate('/atividades');
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (entregaExistente) {
       setResposta(entregaExistente.resposta ?? '');
       setLinkAnexo(entregaExistente.linkAnexo ?? '');
+      const respostas = entregaExistente.respostasObjetivas ?? [];
+      setRespostasMultipla(
+        respostas.reduce<Record<string, number>>((acc, item) => {
+          acc[item.questaoId] = item.alternativaIndex;
+          return acc;
+        }, {}),
+      );
     }
   }, [entregaExistente]);
 
@@ -170,9 +188,23 @@ const AtividadeRealizar: React.FC = () => {
                     {questao.tipo === 'multipla' && questao.opcoes.length > 0 && (
                       <div className="grid grid-cols-1 gap-2 text-sm text-muted-foreground">
                         {questao.opcoes.map((opcao, optionIndex) => (
-                          <div key={`${questao.id}-${optionIndex}`}>
-                            {String.fromCharCode(65 + optionIndex)}) {opcao}
-                          </div>
+                          <label
+                            key={`${questao.id}-${optionIndex}`}
+                            className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 hover:bg-muted/30"
+                          >
+                            <input
+                              type="radio"
+                              name={`questao-${questao.id}`}
+                              checked={respostasMultipla[questao.id] === optionIndex}
+                              onChange={() =>
+                                setRespostasMultipla((prev) => ({ ...prev, [questao.id]: optionIndex }))
+                              }
+                              disabled={modoConsulta}
+                            />
+                            <span>
+                              {String.fromCharCode(65 + optionIndex)}) {opcao}
+                            </span>
+                          </label>
                         ))}
                       </div>
                     )}
