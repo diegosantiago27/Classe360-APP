@@ -171,7 +171,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
             })
             .catch(() => {
-              // Token inválido/expirado ou backend indisponível → mantém sessão local
+              // Em modo com backend, sessão sem validação remota gera divergência de dados
+              // entre perfis. Força novo login para manter consistência.
+              localStorage.removeItem('token');
+              localStorage.removeItem('user');
+              setAuthState({
+                user: null,
+                token: null,
+                isAuthenticated: false,
+                isLoading: false,
+              });
             });
         }
       } catch {

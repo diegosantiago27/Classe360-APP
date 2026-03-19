@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
-import { loadFromStorage } from '@/lib/mockStorage';
+import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -32,6 +32,7 @@ interface DisciplinaVinculo {
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 const atividadesStorageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
+const provasRespostasStorageKey = 'school-compass:provas-respostas';
 
 interface Atividade {
   id: string;
@@ -52,10 +53,26 @@ interface AtividadeEntrega {
   enviadoEm?: string;
 }
 
+interface ProvaResposta {
+  id: string;
+  provaId: string;
+  provaTitulo: string;
+  alunoId: string;
+  alunoNome?: string;
+  turma: string;
+  disciplina: string;
+  status: 'Enviado' | 'Corrigido';
+  notaFinal?: number | null;
+  corrigidoEm?: string;
+  enviadoEm?: string;
+}
+
 type StatusFiltro = 'pendente' | 'corrigido' | 'todos';
+type TipoCorrecao = 'atividades' | 'provas';
 
 interface CorrecaoItem {
   id: string;
+  tipo: TipoCorrecao;
   alunoId: string;
   alunoNome: string;
   atividadeTitulo: string;
@@ -83,40 +100,65 @@ const formatTimeAgo = (iso?: string) => {
 export default function Correcoes() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [syncSeed, setSyncSeed] = useState(0);
   const [busca, setBusca] = useState('');
+  const [tipoCorrecao, setTipoCorrecao] = useState<TipoCorrecao>('atividades');
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('todos');
   const [turmaFiltro, setTurmaFiltro] = useState('todas');
   const [materiaFiltro, setMateriaFiltro] = useState('todas');
 
+  useEffect(() => {
+    const keys = [
+      usersStorageKey,
+      disciplinasStorageKey,
+      turmasStorageKey,
+      vinculosStorageKey,
+      atividadesStorageKey,
+      entregasStorageKey,
+      provasRespostasStorageKey,
+    ];
+    void syncKeysFromBackend(keys).finally(() => setSyncSeed((prev) => prev + 1));
+  }, []);
+
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
-    [],
+    [syncSeed],
   );
   const disciplinas = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
+    [syncSeed],
   );
   const turmas = useMemo(
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-    [],
+    [syncSeed],
   );
   const vinculos = useMemo(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
-    [],
+    [syncSeed],
   );
   const atividades = useMemo(
     () => loadFromStorage<Atividade[]>(atividadesStorageKey, []),
-    [],
+    [syncSeed],
   );
   const entregasAtividades = useMemo(
     () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
-    [],
+    [syncSeed],
+  );
+  const respostasProvas = useMemo(
+    () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
+    [syncSeed],
   );
 
   const vinculosProfessor = useMemo(() => {
-    if (!user?.id) return [];
-    return vinculos.filter((v) => v.professorId === user.id);
-  }, [vinculos, user?.id]);
+    if (!user) return [];
+    const idAtual = normalizeText(user.id);
+    const nomeAtual = normalizeText(user.nome);
+    return vinculos.filter((v) => {
+      const matchId = idAtual && normalizeText(v.professorId) === idAtual;
+      const matchNome = nomeAtual && normalizeText(v.professorNome) === nomeAtual;
+      return Boolean(matchId || matchNome);
+    });
+  }, [vinculos, user]);
 
   const materiasDisponiveis = useMemo(() => {
     const ids = Array.from(new Set(vinculosProfessor.map((v) => v.disciplinaId)));
@@ -145,7 +187,7 @@ export default function Correcoes() {
     [vinculosProfessor, turmas, disciplinas],
   );
 
-  const correcoesBase = useMemo(() => {
+  const correcoesBaseAtividades = useMemo(() => {
     const atividadePorId = new Map(atividades.map((item) => [item.id, item]));
     const usuarioPorId = new Map(usuarios.map((item) => [item.id, item]));
 
@@ -157,8 +199,16 @@ export default function Correcoes() {
         const turmaNome = atividade.turma;
         const materiaNome = atividade.disciplina;
         const chavePar = `${normalizeText(turmaNome)}::${normalizeText(materiaNome)}`;
-        if (user?.id && atividade.professorId && atividade.professorId !== user.id) return null;
-        if (!atividade.professorId && !vinculoParSet.has(chavePar)) return null;
+        const userIdNormalizado = normalizeText(user?.id);
+        const atividadeProfessorNormalizado = normalizeText(atividade.professorId);
+        if (
+          atividadeProfessorNormalizado &&
+          atividadeProfessorNormalizado !== userIdNormalizado &&
+          !vinculoParSet.has(chavePar)
+        ) {
+          return null;
+        }
+        if (!atividadeProfessorNormalizado && !vinculoParSet.has(chavePar)) return null;
 
         if (turmaFiltro !== 'todas' && turmaNome !== turmaFiltro) return null;
         if (materiaFiltro !== 'todas' && materiaNome !== materiaFiltro) return null;
@@ -170,6 +220,7 @@ export default function Correcoes() {
 
         return {
           id: entrega.id || `${entrega.atividadeId}-${entrega.alunoId}`,
+          tipo: 'atividades',
           alunoId: entrega.alunoId,
           alunoNome,
           atividadeTitulo: tituloAtividade,
@@ -187,6 +238,50 @@ export default function Correcoes() {
       .filter((item): item is CorrecaoItem => Boolean(item))
       .sort((a, b) => (b.enviadoEm ?? '').localeCompare(a.enviadoEm ?? ''));
   }, [atividades, entregasAtividades, usuarios, user?.id, vinculoParSet, turmaFiltro, materiaFiltro, turmas]);
+
+  const correcoesBaseProvas = useMemo(() => {
+    const usuarioPorId = new Map(usuarios.map((item) => [item.id, item]));
+
+    return respostasProvas
+      .map((resposta) => {
+        const turmaNome = resposta.turma;
+        const materiaNome = resposta.disciplina;
+        const chavePar = `${normalizeText(turmaNome)}::${normalizeText(materiaNome)}`;
+        if (!vinculoParSet.has(chavePar)) return null;
+
+        if (turmaFiltro !== 'todas' && turmaNome !== turmaFiltro) return null;
+        if (materiaFiltro !== 'todas' && materiaNome !== materiaFiltro) return null;
+
+        const alunoUsuario = usuarioPorId.get(resposta.alunoId);
+        const alunoNome = alunoUsuario?.nome ?? resposta.alunoNome ?? `Aluno ${resposta.alunoId}`;
+        const tituloProva = resposta.provaTitulo ?? 'Prova';
+        const turno = turmas.find((t) => t.nome === turmaNome)?.turno ?? '';
+
+        return {
+          id: resposta.id || `${resposta.provaId}-${resposta.alunoId}`,
+          tipo: 'provas',
+          alunoId: resposta.alunoId,
+          alunoNome,
+          atividadeTitulo: tituloProva,
+          turma: turmaNome,
+          materia: materiaNome,
+          turno,
+          status:
+            resposta.status === 'Corrigido' || typeof resposta.notaFinal === 'number' || Boolean(resposta.corrigidoEm)
+              ? 'Corrigido'
+              : 'Pendente',
+          nota: resposta.notaFinal,
+          enviadoEm: resposta.enviadoEm,
+        } as CorrecaoItem;
+      })
+      .filter((item): item is CorrecaoItem => Boolean(item))
+      .sort((a, b) => (b.enviadoEm ?? '').localeCompare(a.enviadoEm ?? ''));
+  }, [respostasProvas, usuarios, vinculoParSet, turmaFiltro, materiaFiltro, turmas]);
+
+  const correcoesBase = useMemo(
+    () => (tipoCorrecao === 'provas' ? correcoesBaseProvas : correcoesBaseAtividades),
+    [tipoCorrecao, correcoesBaseProvas, correcoesBaseAtividades],
+  );
 
   const totalPendentes = useMemo(
     () => correcoesBase.filter((item) => item.status === 'Pendente').length,
@@ -209,10 +304,14 @@ export default function Correcoes() {
   }, [correcoesBase, statusFiltro, busca]);
 
   const handleAbrirCorrecao = (item: CorrecaoItem) => {
+    if (item.tipo === 'provas') {
+      window.alert('A correção de provas está disponível no fluxo de Provas/Painel do Professor.');
+      return;
+    }
     navigate('/correcoes/detalhe', {
       state: {
         alunosIds: [item.alunoId],
-        tipo: 'atividades',
+        tipo: item.tipo,
         turma: item.turma,
         materia: item.materia,
         turno: item.turno,
@@ -234,7 +333,8 @@ export default function Correcoes() {
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Correções</h1>
             <p className="text-muted-foreground">
-              Você tem {totalPendentes} atividade{totalPendentes === 1 ? '' : 's'} aguardando correção.
+              Você tem {totalPendentes} {tipoCorrecao === 'provas' ? 'prova' : 'atividade'}
+              {totalPendentes === 1 ? '' : 's'} aguardando correção.
             </p>
           </div>
           <div className="text-right">
@@ -244,10 +344,19 @@ export default function Correcoes() {
         </div>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
+          <Select value={tipoCorrecao} onValueChange={(value) => setTipoCorrecao(value as TipoCorrecao)}>
+            <SelectTrigger className="w-full md:w-[180px]">
+              <SelectValue placeholder="Tipo de correção" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="atividades">Atividades</SelectItem>
+              <SelectItem value="provas">Provas</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="relative w-full md:max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Buscar aluno ou atividade..."
+              placeholder={tipoCorrecao === 'provas' ? 'Buscar aluno ou prova...' : 'Buscar aluno ou atividade...'}
               value={busca}
               onChange={(event) => setBusca(event.target.value)}
               className="pl-9"

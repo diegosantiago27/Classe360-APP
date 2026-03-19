@@ -514,7 +514,13 @@ const Notas: React.FC = () => {
                         {iniciais || 'NT'}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">{item.turma}</p>
+                        <Link
+                          to={`/notas/${item.id}`}
+                          state={{ lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre } }}
+                          className="truncate text-sm font-medium text-primary hover:underline"
+                        >
+                          {item.turma}
+                        </Link>
                         <p className="truncate text-xs text-muted-foreground">
                           {item.disciplina} • {item.bimestre}
                         </p>
@@ -539,7 +545,10 @@ const Notas: React.FC = () => {
                         </div>
                       )}
                       {somenteConsulta && (
-                        <Link to={`/notas/${item.id}`}>
+                        <Link
+                          to={`/notas/${item.id}`}
+                          state={{ lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre } }}
+                        >
                           <Button variant="outline" size="sm">Ver</Button>
                         </Link>
                       )}

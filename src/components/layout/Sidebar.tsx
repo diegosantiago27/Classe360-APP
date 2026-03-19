@@ -119,7 +119,7 @@ const navItems: NavItem[] = [
     icon: ClipboardList,
     label: 'Atividades',
     path: '/atividades',
-    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR, UserProfile.ALUNO],
   },
   {
     icon: FileText,

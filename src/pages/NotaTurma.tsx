@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
+import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -59,6 +61,32 @@ const lancamentosStorageKey = 'school-compass:notas';
 const notasAlunosStorageKey = 'school-compass:notas-alunos';
 const provasRespostasStorageKey = 'school-compass:provas-respostas';
 const atividadesEntregasStorageKey = 'school-compass:atividades-entregas';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+interface DisciplinaVinculoStorage {
+  turmaId: string;
+  turmaNome: string;
+  alunos?: Array<{
+    alunoId: string;
+    alunoNome: string;
+  }>;
+}
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const getTurmaKey = (value?: string) => {
+  const normalized = normalizeText(value)
+    .replace(/º/g, 'o')
+    .replace(/\s+/g, ' ');
+  const match = normalized.match(/(\d+)\s*(?:o|ano)?\s*([a-z])/i);
+  if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  return normalized.replace(/[^a-z0-9]/g, '');
+};
 
 const defaultLancamentos: Lancamento[] = [
   {
@@ -100,6 +128,7 @@ const NotaTurma: React.FC = () => {
   const { user } = useAuth();
   const podeEditarNotas = user?.perfil !== UserProfile.SECRETARIA;
   const { id } = useParams();
+  const location = useLocation();
   const lancamentos = useMemo(
     () => loadFromStorage<Lancamento[]>(lancamentosStorageKey, defaultLancamentos),
     [],
@@ -108,8 +137,25 @@ const NotaTurma: React.FC = () => {
     () => lancamentos.find((item) => item.id === id) ?? null,
     [id, lancamentos],
   );
+  const lancamentoFromState = useMemo(() => {
+    const state = location.state as { lancamento?: Lancamento } | null;
+    return state?.lancamento ?? null;
+  }, [location.state]);
+  const lancamentoAtual = lancamento ?? lancamentoFromState;
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(
     () => loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
+  );
+  const usuarios = useMemo(
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    [],
+  );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
+    [],
+  );
+  const turmas = useMemo(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
   );
   const respostasProvas = useMemo(
     () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
@@ -120,27 +166,72 @@ const NotaTurma: React.FC = () => {
     [],
   );
 
+  const alunosTurmaAtual = useMemo(() => {
+    if (!lancamentoAtual) return [];
+    const turmaKey = getTurmaKey(lancamentoAtual.turma);
+
+    const alunosPorCadastro = usuarios
+      .filter(
+        (u) =>
+          u.perfil === UserProfile.ALUNO &&
+          u.status === 'ativo' &&
+          (u.turmas ?? []).some((turmaNome) => getTurmaKey(turmaNome) === turmaKey),
+      )
+      .map((u) => ({ id: u.id, nome: u.nome, turma: lancamentoAtual.turma }));
+
+    const alunosPorVinculo = vinculos
+      .filter((v) => {
+        const turmaNomePorId = turmas.find((t) => t.id === v.turmaId)?.nome;
+        return (
+          getTurmaKey(v.turmaNome) === turmaKey ||
+          getTurmaKey(turmaNomePorId) === turmaKey ||
+          getTurmaKey(v.turmaId) === turmaKey
+        );
+      })
+      .flatMap((v) => v.alunos ?? [])
+      .map((a) => {
+        const usuario = usuarios.find((u) => u.id === a.alunoId);
+        return {
+          id: a.alunoId,
+          nome: usuario?.nome ?? a.alunoNome,
+          turma: lancamentoAtual.turma,
+        };
+      });
+
+    const unicos = new Map<string, AlunoTurma>();
+    [...alunosPorCadastro, ...alunosPorVinculo].forEach((aluno) => {
+      if (!unicos.has(aluno.id)) {
+        unicos.set(aluno.id, aluno);
+      }
+    });
+
+    return Array.from(unicos.values()).sort((a, b) =>
+      a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }),
+    );
+  }, [lancamentoAtual, turmas, usuarios, vinculos]);
+
   const notasDaTurma = useMemo(() => {
-    if (!lancamento) return [];
+    if (!lancamentoAtual) return [];
     return notasAlunos.filter(
       (nota) =>
-        nota.turma === lancamento.turma &&
-        nota.disciplina === lancamento.disciplina &&
-        nota.bimestre === lancamento.bimestre,
+        nota.turma === lancamentoAtual.turma &&
+        nota.disciplina === lancamentoAtual.disciplina &&
+        nota.bimestre === lancamentoAtual.bimestre,
     );
-  }, [lancamento, notasAlunos]);
+  }, [lancamentoAtual, notasAlunos]);
 
   useEffect(() => {
-    if (!lancamento) return;
-    if (notasDaTurma.length > 0) return;
-    const alunosTurma = defaultAlunos.filter((aluno) => aluno.turma === lancamento.turma);
-    const novasNotas: NotaAluno[] = alunosTurma.map((aluno) => ({
+    if (!lancamentoAtual) return;
+    const idsExistentes = new Set(notasDaTurma.map((nota) => nota.alunoId));
+    const novasNotas: NotaAluno[] = alunosTurmaAtual
+      .filter((aluno) => !idsExistentes.has(aluno.id))
+      .map((aluno) => ({
       id: createId('nota-aluno'),
       alunoId: aluno.id,
       alunoNome: aluno.nome,
-      turma: lancamento.turma,
-      disciplina: lancamento.disciplina,
-      bimestre: lancamento.bimestre,
+      turma: lancamentoAtual.turma,
+      disciplina: lancamentoAtual.disciplina,
+      bimestre: lancamentoAtual.bimestre,
       trabalhosNota: null,
       provasNota: null,
       nota: null,
@@ -149,9 +240,13 @@ const NotaTurma: React.FC = () => {
     const updated = [...notasAlunos, ...novasNotas];
     setNotasAlunos(updated);
     saveToStorage(notasAlunosStorageKey, updated);
-  }, [lancamento, notasDaTurma.length, notasAlunos]);
+  }, [alunosTurmaAtual, lancamentoAtual, notasDaTurma, notasAlunos]);
 
-  const notasExibidas = useMemo(() => notasDaTurma, [notasDaTurma]);
+  const notasExibidas = useMemo(() => {
+    const idsAlunosAtuais = new Set(alunosTurmaAtual.map((aluno) => aluno.id));
+    if (idsAlunosAtuais.size === 0) return [];
+    return notasDaTurma.filter((nota) => idsAlunosAtuais.has(nota.alunoId));
+  }, [alunosTurmaAtual, notasDaTurma]);
 
   const notasOrdenadas = useMemo(() => {
     return [...notasExibidas].sort((a, b) =>
@@ -213,27 +308,27 @@ const NotaTurma: React.FC = () => {
   };
 
   const notasPorAluno = useMemo(() => {
-    if (!lancamento) return [];
+    if (!lancamentoAtual) return [];
     return alunosDaTurma.map((aluno) => {
       const { mediaProvas, mediaTrabalhos, mediaFinal } = calcularMediaFinal(
         aluno.alunoId,
-        lancamento.turma,
-        lancamento.disciplina,
+        lancamentoAtual.turma,
+        lancamentoAtual.disciplina,
       );
       const notasRegistradas = notasAlunos.filter(
         (nota) =>
           nota.alunoId === aluno.alunoId &&
-          nota.turma === lancamento.turma &&
-          nota.disciplina === lancamento.disciplina &&
+          nota.turma === lancamentoAtual.turma &&
+          nota.disciplina === lancamentoAtual.disciplina &&
           typeof nota.nota === 'number',
       );
       const notaAtualBimestre =
         notasAlunos.find(
           (nota) =>
             nota.alunoId === aluno.alunoId &&
-            nota.turma === lancamento.turma &&
-            nota.disciplina === lancamento.disciplina &&
-            nota.bimestre === lancamento.bimestre,
+            nota.turma === lancamentoAtual.turma &&
+            nota.disciplina === lancamentoAtual.disciplina &&
+            nota.bimestre === lancamentoAtual.bimestre,
         ) ?? null;
       const trabalhosExibicao =
         typeof notaAtualBimestre?.trabalhosNota === 'number'
@@ -261,10 +356,10 @@ const NotaTurma: React.FC = () => {
           : null,
       };
     });
-  }, [alunosDaTurma, entregasAtividades, lancamento, notasAlunos, respostasProvas]);
+  }, [alunosDaTurma, entregasAtividades, lancamentoAtual, notasAlunos, respostasProvas]);
 
   const handleNotaChange = (alunoId: string, field: 'trabalhosNota' | 'provasNota' | 'nota', rawValue: string) => {
-    if (!lancamento) return;
+    if (!lancamentoAtual) return;
     const normalizedValue =
       rawValue.trim() === ''
         ? null
@@ -274,16 +369,16 @@ const NotaTurma: React.FC = () => {
     const updated = notasAlunos.map((nota) => {
       const isTarget =
         nota.alunoId === alunoId &&
-        nota.turma === lancamento.turma &&
-        nota.disciplina === lancamento.disciplina &&
-        nota.bimestre === lancamento.bimestre;
+        nota.turma === lancamentoAtual.turma &&
+        nota.disciplina === lancamentoAtual.disciplina &&
+        nota.bimestre === lancamentoAtual.bimestre;
       return isTarget ? { ...nota, [field]: normalizedValue } : nota;
     });
     setNotasAlunos(updated);
     saveToStorage(notasAlunosStorageKey, updated);
   };
 
-  if (!lancamento) {
+  if (!lancamentoAtual) {
     return (
       <DashboardLayout>
         <div className="space-y-4">
@@ -315,7 +410,7 @@ const NotaTurma: React.FC = () => {
               Notas da turma
             </h1>
             <p className="text-muted-foreground">
-              {lancamento.turma} - {lancamento.disciplina} - {lancamento.bimestre}
+              {lancamentoAtual.turma} - {lancamentoAtual.disciplina} - {lancamentoAtual.bimestre}
             </p>
           </div>
         </div>

@@ -1,8 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Calendar, UserCheck } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadFromStorage } from '@/lib/mockStorage';
+import { useAuth } from '@/contexts/AuthContext';
+import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { UserProfile } from '@/types/auth';
 
 interface FrequenciaItem {
   id: string;
@@ -11,19 +15,107 @@ interface FrequenciaItem {
   faltas: number;
 }
 
-const storageKey = 'school-compass:minha-frequencia';
+interface RegistroPresenca {
+  id: string;
+  turma: string;
+  alunoId: string;
+  alunoNome: string;
+  data: string;
+  status: 'Presente' | 'Falta';
+}
 
-const defaultFrequencias: FrequenciaItem[] = [
-  { id: 'MAT', disciplina: 'Matematica', presenca: 95, faltas: 2 },
-  { id: 'POR', disciplina: 'Portugues', presenca: 92, faltas: 3 },
-  { id: 'HIS', disciplina: 'Historia', presenca: 98, faltas: 1 },
-  { id: 'GEO', disciplina: 'Geografia', presenca: 90, faltas: 4 },
-];
+interface AlunoVinculado {
+  alunoId: string;
+  alunoNome: string;
+}
+
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  alunos: AlunoVinculado[];
+}
+
+const presencasStorageKey = 'school-compass:frequencia-diaria';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const getTurmaKey = (value?: string) => {
+  const normalized = normalizeText(value).replace(/º/g, 'o').replace(/\s+/g, ' ');
+  const match = normalized.match(/(\d+)\s*(?:o|ano)?\s*([a-z])/i);
+  if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  return normalized.replace(/[^a-z0-9]/g, '');
+};
 
 const MinhaFrequencia: React.FC = () => {
-  const [frequencias, setFrequencias] = useState<FrequenciaItem[]>(
-    () => loadFromStorage<FrequenciaItem[]>(storageKey, defaultFrequencias),
+  const { user } = useAuth();
+  const usuarios = useMemo(
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    [],
   );
+  const disciplinas = useMemo(
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    [],
+  );
+  const vinculos = useMemo(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+    [],
+  );
+  const presencas = useMemo(
+    () => loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
+    [],
+  );
+  const alunoAtual = useMemo(
+    () => usuarios.find((u) => u.id === user?.id && u.perfil === UserProfile.ALUNO) ?? null,
+    [usuarios, user?.id],
+  );
+
+  const frequencias = useMemo(() => {
+    if (!alunoAtual) return [];
+    const turmaKeysAluno = new Set((alunoAtual.turmas ?? []).map((t) => getTurmaKey(t)));
+
+    const vinculosAluno = vinculos.filter((v) => {
+      const temAlunoNoVinculo = (v.alunos ?? []).some((a) => a.alunoId === alunoAtual.id);
+      const turmaCompativel = turmaKeysAluno.has(getTurmaKey(v.turmaNome)) || turmaKeysAluno.has(getTurmaKey(v.turmaId));
+      return temAlunoNoVinculo || turmaCompativel;
+    });
+
+    const unicos = new Map<string, FrequenciaItem>();
+    vinculosAluno.forEach((v) => {
+      const disciplinaNome =
+        disciplinas.find((d) => d.id === v.disciplinaId)?.nome ??
+        v.disciplinaId;
+      const turmaKeyVinculo = getTurmaKey(v.turmaNome || v.turmaId);
+      const presencasAlunoTurma = presencas.filter(
+        (p) => p.alunoId === alunoAtual.id && getTurmaKey(p.turma) === turmaKeyVinculo,
+      );
+      const totalRegistros = presencasAlunoTurma.length;
+      const faltas = presencasAlunoTurma.filter((p) => p.status === 'Falta').length;
+      const presentes = totalRegistros - faltas;
+      const presencaPercentual =
+        totalRegistros > 0 ? Math.round((presentes / totalRegistros) * 1000) / 10 : 0;
+
+      const item: FrequenciaItem = {
+        id: `${v.disciplinaId}-${turmaKeyVinculo}`,
+        disciplina: disciplinaNome,
+        presenca: presencaPercentual,
+        faltas,
+      };
+      unicos.set(item.id, item);
+    });
+
+    return Array.from(unicos.values()).sort((a, b) =>
+      a.disciplina.localeCompare(b.disciplina, 'pt-BR', { sensitivity: 'base' }),
+    );
+  }, [alunoAtual, disciplinas, presencas, vinculos]);
 
   const media = useMemo(() => {
     if (frequencias.length === 0) return 0;
@@ -32,6 +124,18 @@ const MinhaFrequencia: React.FC = () => {
       10
     );
   }, [frequencias]);
+
+  const ultimaAtualizacao = useMemo(() => {
+    if (!alunoAtual) return 'Sem registros';
+    const datas = presencas
+      .filter((p) => p.alunoId === alunoAtual.id)
+      .map((p) => p.data)
+      .filter(Boolean)
+      .sort((a, b) => b.localeCompare(a));
+    if (datas.length === 0) return 'Sem registros';
+    const [yyyy, mm, dd] = datas[0].split('-');
+    return dd && mm && yyyy ? `${dd}/${mm}/${yyyy}` : datas[0];
+  }, [alunoAtual, presencas]);
 
   return (
     <DashboardLayout>
@@ -65,7 +169,7 @@ const MinhaFrequencia: React.FC = () => {
                 <CardTitle className="text-sm font-medium text-muted-foreground">
                   Ultima atualizacao
                 </CardTitle>
-                <div className="text-2xl font-semibold text-foreground">Ontem</div>
+                <div className="text-2xl font-semibold text-foreground">{ultimaAtualizacao}</div>
               </div>
               <Calendar className="w-5 h-5 text-primary" />
             </CardHeader>
@@ -74,7 +178,7 @@ const MinhaFrequencia: React.FC = () => {
 
         {frequencias.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Nenhuma frequencia cadastrada. Clique em "Nova disciplina".
+            Nenhum registro de frequencia encontrado para suas disciplinas.
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

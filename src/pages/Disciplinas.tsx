@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { Turma, turmasStorageKey, defaultTurmas } from '@/lib/mockTurmas';
@@ -71,6 +71,19 @@ const Disciplinas: React.FC = () => {
   const [usuarios, setUsuarios] = useState<StoredUser[]>(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
   );
+  const [turmas, setTurmas] = useState<Turma[]>(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+  );
+
+  useEffect(() => {
+    const keys = [disciplinasStorageKey, vinculosStorageKey, usersStorageKey, turmasStorageKey];
+    void syncKeysFromBackend(keys).finally(() => {
+      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+    });
+  }, []);
 
   useEffect(() => {
     if (!API_URL) return;
@@ -108,10 +121,6 @@ const Disciplinas: React.FC = () => {
       cancelled = true;
     };
   }, []);
-
-  const [turmas] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-  );
 
   const total = useMemo(() => disciplinas.length, [disciplinas]);
   const totalComProfessor = useMemo(

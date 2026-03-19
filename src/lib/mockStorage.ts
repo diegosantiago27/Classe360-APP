@@ -41,7 +41,12 @@ export const syncKeysFromBackend = async (keys: string[]) => {
     const data = (await res.json()) as { items?: Record<string, unknown | null> };
     const items = data.items ?? {};
     Object.entries(items).forEach(([key, value]) => {
-      if (value === null || value === undefined) return;
+      // Se o backend não tem valor para a chave, removemos o cache local
+      // para evitar dados "fantasma" divergentes entre perfis.
+      if (value === null || value === undefined) {
+        window.localStorage.removeItem(key);
+        return;
+      }
       window.localStorage.setItem(key, JSON.stringify(value));
     });
   } catch {
