@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
@@ -61,12 +61,21 @@ interface QuestaoDraft {
 const storageKey = 'school-compass:atividades';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 
+function normalizeText(value?: string): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
 interface DisciplinaVinculo {
   disciplinaId: string;
   turmaId: string;
   turmaNome: string;
   professorId: string;
   professorNome: string;
+  disciplinaNome?: string;
 }
 
 const NovaAtividade: React.FC = () => {
@@ -97,25 +106,33 @@ const NovaAtividade: React.FC = () => {
     },
   ]);
 
-  const disciplinasDisponiveis = useMemo(
+  const [disciplinasDisponiveis, setDisciplinasDisponiveis] = useState<CatalogItem[]>(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
   );
-  const turmasDisponiveis = useMemo(
+  const [turmasDisponiveis, setTurmasDisponiveis] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-    [],
   );
-  const vinculos = useMemo(
+  const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
-    [],
   );
   const instituicao = useMemo(() => {
     const dados = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
     return dados.nome?.trim() || defaultInstituicao.nome;
   }, []);
+
+  useEffect(() => {
+    const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey];
+    void syncKeysFromBackend(keys).finally(() => {
+      setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+    });
+  }, []);
   const professorVinculos = useMemo(() => {
     if (!user?.id) return [];
-    return vinculos.filter((v) => v.professorId === user.id);
+    const idAtual = normalizeText(user.id);
+    if (!idAtual) return [];
+    return vinculos.filter((v) => normalizeText(v.professorId) === idAtual);
   }, [vinculos, user?.id]);
   const disciplinasFiltradas = useMemo(() => {
     if (professorVinculos.length === 0) return disciplinasDisponiveis;
@@ -124,16 +141,24 @@ const NovaAtividade: React.FC = () => {
   }, [disciplinasDisponiveis, professorVinculos]);
   const turmasFiltradas = useMemo(() => {
     if (!disciplinaId) return [];
-    const idsPorVinculo = new Set(
-      professorVinculos
-        .filter((v) => v.disciplinaId === disciplinaId)
-        .map((v) => v.turmaId),
+    const disciplinaSelecionada = disciplinasDisponiveis.find((d) => d.id === disciplinaId);
+    const disciplinaNomeSelecionada = normalizeText(disciplinaSelecionada?.nome);
+
+    const vinculosDaDisciplina = professorVinculos.filter((v) => {
+      const matchPorId = normalizeText(v.disciplinaId) === normalizeText(disciplinaId);
+      const matchPorNome =
+        disciplinaNomeSelecionada &&
+        normalizeText(v.disciplinaNome) === disciplinaNomeSelecionada;
+      return matchPorId || Boolean(matchPorNome);
+    });
+
+    const turmaIds = new Set(vinculosDaDisciplina.map((v) => normalizeText(v.turmaId)));
+    const turmaNomes = new Set(vinculosDaDisciplina.map((v) => normalizeText(v.turmaNome)));
+
+    return turmasDisponiveis.filter(
+      (t) => turmaIds.has(normalizeText(t.id)) || turmaNomes.has(normalizeText(t.nome)),
     );
-    if (idsPorVinculo.size > 0) {
-      return turmasDisponiveis.filter((t) => idsPorVinculo.has(t.id));
-    }
-    return turmasDisponiveis;
-  }, [disciplinaId, professorVinculos, turmasDisponiveis]);
+  }, [disciplinaId, disciplinasDisponiveis, professorVinculos, turmasDisponiveis]);
   const turnoPorTurma = useMemo(
     () => Object.fromEntries(turmasDisponiveis.map((t) => [t.id, t.turno] as const)),
     [turmasDisponiveis],

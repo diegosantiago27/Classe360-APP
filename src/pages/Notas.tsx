@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ClipboardList, PenLine, Pencil, Trash2 } from 'lucide-react';
+import { CheckCircle2, ClipboardList, PenLine, Pencil, Search, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
@@ -33,6 +32,10 @@ interface DisciplinaVinculo {
   turmaNome: string;
   professorId: string;
   professorNome: string;
+  alunos?: Array<{
+    alunoId: string;
+    alunoNome: string;
+  }>;
 }
 
 const storageKey = 'school-compass:notas';
@@ -103,7 +106,8 @@ const Notas: React.FC = () => {
   const [disciplinaSelecionada, setDisciplinaSelecionada] = useState<string>('todas');
   const [bimestreSelecionado, setBimestreSelecionado] = useState<string>('todos');
   const [turmaSelecionada, setTurmaSelecionada] = useState<string>('todas');
-  const [turnoSelecionado, setTurnoSelecionado] = useState<string>('todos');
+  const [busca, setBusca] = useState('');
+  const [statusSelecionado, setStatusSelecionado] = useState<'todos' | 'pendentes' | 'completos'>('todos');
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
     [],
@@ -118,7 +122,7 @@ const Notas: React.FC = () => {
   );
   const professorVinculos = useMemo(() => {
     if (!ehProfessor || !user?.id) return [];
-    return vinculos.filter((v) => v.professorId === user.id);
+    return vinculos.filter((v) => normalizeText(v.professorId) === normalizeText(user.id));
   }, [ehProfessor, user?.id, vinculos]);
   const turnoPorTurma = useMemo(
     () => new Map(turmasDisponiveis.map((turma) => [turma.nome, turma.turno])),
@@ -128,33 +132,97 @@ const Notas: React.FC = () => {
     () => new Map(disciplinasDisponiveis.map((item) => [item.id, item.nome])),
     [disciplinasDisponiveis],
   );
+  const resolveDisciplinaNome = (disciplinaIdOuNome: string) => {
+    const porId = disciplinaNomePorId.get(disciplinaIdOuNome);
+    if (porId) return porId;
+    const key = normalizeText(disciplinaIdOuNome);
+    const fallback = disciplinasDisponiveis.find(
+      (item) => normalizeText(item.id) === key || normalizeText(item.nome) === key,
+    );
+    return fallback?.nome ?? disciplinaIdOuNome;
+  };
+  const resolveTurmaNome = (turmaIdOuNome: string, turmaNomeVinculo?: string) => {
+    const keyId = normalizeText(turmaIdOuNome);
+    const keyNome = normalizeText(turmaNomeVinculo);
+    const fallback = turmasDisponiveis.find(
+      (t) =>
+        normalizeText(t.id) === keyId ||
+        normalizeText(t.nome) === keyId ||
+        (keyNome ? normalizeText(t.nome) === keyNome : false),
+    );
+    return fallback?.nome ?? turmaNomeVinculo ?? turmaIdOuNome;
+  };
+  const lancamentosCompletos = useMemo(() => {
+    const existentes = [...lancamentos];
+    const existentesKeys = new Set(
+      existentes.map(
+        (item) =>
+          `${normalizeText(item.turma)}::${normalizeText(item.disciplina)}::${normalizeText(item.bimestre)}`,
+      ),
+    );
+
+    vinculos.forEach((vinculo) => {
+      const turmaNome = resolveTurmaNome(vinculo.turmaId, vinculo.turmaNome);
+      const disciplinaNome = resolveDisciplinaNome(vinculo.disciplinaId);
+      const bimestrePadrao = '1º Bimestre';
+      const key = `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}::${normalizeText(bimestrePadrao)}`;
+      if (existentesKeys.has(key)) return;
+      const pendentes = Math.max(0, Number(vinculo.alunos?.length ?? 0));
+      existentes.push({
+        id: createId('nota-auto'),
+        turma: turmaNome,
+        disciplina: disciplinaNome,
+        bimestre: bimestrePadrao,
+        pendentes,
+        status: pendentes > 0 ? 'Pendente' : 'Concluida',
+      });
+      existentesKeys.add(key);
+    });
+
+    return existentes;
+  }, [lancamentos, vinculos, turmasDisponiveis, disciplinasDisponiveis, disciplinaNomePorId]);
   const paresVinculadosProfessor = useMemo(() => {
     return new Set(
       professorVinculos.map((v) => {
-        const disciplinaNome = disciplinaNomePorId.get(v.disciplinaId) ?? '';
-        const turmaNome =
-          turmasDisponiveis.find((t) => t.id === v.turmaId)?.nome ??
-          v.turmaNome ??
-          v.turmaId;
+        const disciplinaNome = resolveDisciplinaNome(v.disciplinaId);
+        const turmaNome = resolveTurmaNome(v.turmaId, v.turmaNome);
         return `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}`;
       }),
     );
-  }, [professorVinculos, disciplinaNomePorId, turmasDisponiveis]);
-  const lancamentosVisiveis = useMemo(() => {
-    if (!ehProfessor) return lancamentos;
-    return lancamentos.filter((item) =>
-      paresVinculadosProfessor.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
+  }, [professorVinculos, disciplinaNomePorId, turmasDisponiveis, disciplinasDisponiveis]);
+  const paresVinculadosGerais = useMemo(() => {
+    return new Set(
+      vinculos.map((v) => {
+        const disciplinaNome = resolveDisciplinaNome(v.disciplinaId);
+        const turmaNome = resolveTurmaNome(v.turmaId, v.turmaNome);
+        return `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}`;
+      }),
     );
-  }, [ehProfessor, lancamentos, paresVinculadosProfessor]);
+  }, [vinculos, disciplinaNomePorId, turmasDisponiveis, disciplinasDisponiveis]);
+  const lancamentosVisiveis = useMemo(() => {
+    if (ehProfessor) {
+      return lancamentosCompletos.filter((item) =>
+        paresVinculadosProfessor.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
+      );
+    }
+    // Para perfis administrativos/consulta, quando há vínculos cadastrados
+    // mostramos apenas lançamentos coerentes com os vínculos reais.
+    if (paresVinculadosGerais.size > 0) {
+      return lancamentosCompletos.filter((item) =>
+        paresVinculadosGerais.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
+      );
+    }
+    return lancamentosCompletos;
+  }, [ehProfessor, lancamentosCompletos, paresVinculadosProfessor, paresVinculadosGerais]);
   const disciplinaOptions = useMemo(
     () => {
       if (!ehProfessor) return disciplinasDisponiveis.map((item) => item.nome);
       const nomes = professorVinculos
-        .map((v) => disciplinaNomePorId.get(v.disciplinaId) ?? '')
+        .map((v) => resolveDisciplinaNome(v.disciplinaId))
         .filter(Boolean);
       return Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
     },
-    [ehProfessor, disciplinasDisponiveis, professorVinculos, disciplinaNomePorId],
+    [ehProfessor, disciplinasDisponiveis, professorVinculos, disciplinaNomePorId, turmasDisponiveis],
   );
   const turmaOptions = useMemo(() => {
     if (!ehProfessor) {
@@ -163,7 +231,7 @@ const Notas: React.FC = () => {
         .sort((a, b) => a.localeCompare(b, 'pt-BR'));
     }
     const nomes = professorVinculos
-      .map((v) => turmasDisponiveis.find((t) => t.id === v.turmaId)?.nome ?? v.turmaNome ?? '')
+      .map((v) => resolveTurmaNome(v.turmaId, v.turmaNome))
       .filter(Boolean);
     return Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [ehProfessor, professorVinculos, turmasDisponiveis]);
@@ -175,25 +243,40 @@ const Notas: React.FC = () => {
   const lancamentosFiltrados = useMemo(() => {
     return lancamentosVisiveis.filter((item) => {
       const matchDisciplina =
-        disciplinaSelecionada === 'todas' || item.disciplina === disciplinaSelecionada;
+        disciplinaSelecionada === 'todas' ||
+        normalizeText(item.disciplina) === normalizeText(disciplinaSelecionada);
       const matchBimestre =
-        bimestreSelecionado === 'todos' || item.bimestre === bimestreSelecionado;
+        bimestreSelecionado === 'todos' ||
+        normalizeText(item.bimestre) === normalizeText(bimestreSelecionado);
       const matchTurma =
-        turmaSelecionada === 'todas' || item.turma === turmaSelecionada;
-      const matchTurno =
-        turnoSelecionado === 'todos' || turnoPorTurma.get(item.turma) === turnoSelecionado;
-      return matchDisciplina && matchBimestre && matchTurma && matchTurno;
+        turmaSelecionada === 'todas' ||
+        normalizeText(item.turma) === normalizeText(turmaSelecionada);
+      return matchDisciplina && matchBimestre && matchTurma;
     });
-  }, [lancamentosVisiveis, disciplinaSelecionada, bimestreSelecionado, turmaSelecionada, turnoSelecionado, turnoPorTurma]);
+  }, [lancamentosVisiveis, disciplinaSelecionada, bimestreSelecionado, turmaSelecionada]);
 
-  const pendentes = useMemo(
+  const totalTodos = lancamentosFiltrados.length;
+  const totalPendentes = useMemo(
     () => lancamentosFiltrados.filter((item) => item.status === 'Pendente').length,
     [lancamentosFiltrados],
   );
-  const concluidas = useMemo(
+  const totalCompletos = useMemo(
     () => lancamentosFiltrados.filter((item) => item.status === 'Concluida').length,
     [lancamentosFiltrados],
   );
+
+  const lancamentosLista = useMemo(() => {
+    return lancamentosFiltrados.filter((item) => {
+      if (statusSelecionado === 'pendentes' && item.status !== 'Pendente') return false;
+      if (statusSelecionado === 'completos' && item.status !== 'Concluida') return false;
+      if (!busca.trim()) return true;
+      const texto = normalizeText(`${item.turma} ${item.disciplina} ${item.bimestre}`);
+      return texto.includes(normalizeText(busca));
+    });
+  }, [lancamentosFiltrados, statusSelecionado, busca]);
+
+  const pendentes = totalPendentes;
+  const concluidas = totalCompletos;
 
   const mediaGeral = useMemo(() => {
     if (lancamentosFiltrados.length === 0) return 0;
@@ -329,133 +412,141 @@ const Notas: React.FC = () => {
             <CardDescription>
               Visualize o status de cada bimestre e complete pendencias.
             </CardDescription>
-            <div className="flex flex-col gap-3 pt-3 md:flex-row md:items-end">
-              <div className="max-w-xs">
-                <Label htmlFor="filtro-disciplina" className="text-xs text-muted-foreground">
-                  Filtrar por disciplina
-                </Label>
-                <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
-                  <SelectTrigger id="filtro-disciplina">
-                    <SelectValue placeholder="Todas as disciplinas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todas">Todas as disciplinas</SelectItem>
-                    {disciplinaOptions.map((disciplina) => (
-                      <SelectItem key={disciplina} value={disciplina}>
-                        {disciplina}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="flex flex-col gap-3 pt-3 md:flex-row md:items-center">
+              <div className="relative w-full md:max-w-sm">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={busca}
+                  onChange={(event) => setBusca(event.target.value)}
+                  placeholder="Buscar aluno ou disciplina"
+                  className="pl-9"
+                />
               </div>
-              <div className="max-w-xs">
-                <Label htmlFor="filtro-bimestre" className="text-xs text-muted-foreground">
-                  Filtrar por bimestre
-                </Label>
-                <Select value={bimestreSelecionado} onValueChange={setBimestreSelecionado}>
-                  <SelectTrigger id="filtro-bimestre">
-                    <SelectValue placeholder="Todos os bimestres" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os bimestres</SelectItem>
-                    {bimestreOptions.map((bimestre) => (
-                      <SelectItem key={bimestre} value={bimestre}>
-                        {bimestre}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="inline-flex rounded-md border border-border bg-muted/20 p-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={statusSelecionado === 'todos' ? 'default' : 'ghost'}
+                  onClick={() => setStatusSelecionado('todos')}
+                >
+                  Todos {totalTodos}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={statusSelecionado === 'pendentes' ? 'default' : 'ghost'}
+                  onClick={() => setStatusSelecionado('pendentes')}
+                >
+                  Pendentes {totalPendentes}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={statusSelecionado === 'completos' ? 'default' : 'ghost'}
+                  onClick={() => setStatusSelecionado('completos')}
+                >
+                  Completos {totalCompletos}
+                </Button>
               </div>
-              <div className="max-w-xs">
-                <Label htmlFor="filtro-turno" className="text-xs text-muted-foreground">
-                  Filtrar por turno
-                </Label>
-                <Select value={turnoSelecionado} onValueChange={setTurnoSelecionado}>
-                  <SelectTrigger id="filtro-turno">
-                    <SelectValue placeholder="Todos os turnos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os turnos</SelectItem>
-                    <SelectItem value="Manha">Manha</SelectItem>
-                    <SelectItem value="Tarde">Tarde</SelectItem>
-                    <SelectItem value="Noite">Noite</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="max-w-xs">
-                <Label htmlFor="filtro-turma" className="text-xs text-muted-foreground">
-                  Filtrar por turma
-                </Label>
-                <Select value={turmaSelecionada} onValueChange={setTurmaSelecionada}>
-                  <SelectTrigger id="filtro-turma">
-                    <SelectValue placeholder="Todas as turmas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todas">Todas as turmas</SelectItem>
-                    {turmaOptions.map((turma) => (
-                      <SelectItem key={turma} value={turma}>
-                        {turma}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <Select value={turmaSelecionada} onValueChange={setTurmaSelecionada}>
+                <SelectTrigger className="w-full md:w-[170px]">
+                  <SelectValue placeholder="Todas turmas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas turmas</SelectItem>
+                  {turmaOptions.map((turma) => (
+                    <SelectItem key={turma} value={turma}>
+                      {turma}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
+                <SelectTrigger className="w-full md:w-[180px]">
+                  <SelectValue placeholder="Todas disciplinas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas disciplinas</SelectItem>
+                  {disciplinaOptions.map((disciplina) => (
+                    <SelectItem key={disciplina} value={disciplina}>
+                      {disciplina}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={bimestreSelecionado} onValueChange={setBimestreSelecionado}>
+                <SelectTrigger className="w-full md:w-[170px]">
+                  <SelectValue placeholder="Todos bimestres" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos bimestres</SelectItem>
+                  {bimestreOptions.map((bimestre) => (
+                    <SelectItem key={bimestre} value={bimestre}>
+                      {bimestre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </CardHeader>
           <CardContent>
-            {lancamentosFiltrados.length === 0 ? (
+            {lancamentosLista.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                 Nenhum lancamento encontrado para esta disciplina.
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Turma</TableHead>
-                    <TableHead>Disciplina</TableHead>
-                    <TableHead>Bimestre</TableHead>
-                    <TableHead>Pendentes</TableHead>
-                    <TableHead>Status</TableHead>
-                    {!somenteConsulta && (
-                    <TableHead className="text-right">Acoes</TableHead>
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lancamentosFiltrados.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">
-                        <Link to={`/notas/${item.id}`}>
-                          <Button variant="ghost" size="sm">
-                            {item.turma}
-                          </Button>
-                        </Link>
-                      </TableCell>
-                      <TableCell>{item.disciplina}</TableCell>
-                      <TableCell>{item.bimestre}</TableCell>
-                      <TableCell>{item.pendentes}</TableCell>
-                      <TableCell>
-                        <Badge variant={item.status === 'Pendente' ? 'destructive' : 'secondary'}>
-                          {item.status}
-                        </Badge>
-                      </TableCell>
+              <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+                {lancamentosLista.map((item) => {
+                  const mediaItem = item.status === 'Concluida'
+                    ? Math.max(5, 9 - item.pendentes * 0.5)
+                    : null;
+                  const iniciais = item.turma
+                    .replace('º', '')
+                    .split(' ')
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((part) => part[0])
+                    .join('')
+                    .toUpperCase();
+                  return (
+                    <div key={item.id} className="flex items-center gap-4 px-4 py-3">
+                      <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground">
+                        {iniciais || 'NT'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">{item.turma}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {item.disciplina} • {item.bimestre}
+                        </p>
+                      </div>
+                      <div className="hidden min-w-[60px] text-xs text-muted-foreground md:block">
+                        {item.pendentes} pend.
+                      </div>
+                      <Badge variant={item.status === 'Pendente' ? 'destructive' : 'secondary'}>
+                        {item.status === 'Pendente' ? 'PENDENTE' : 'COMPLETO'}
+                      </Badge>
+                      <div className="w-12 text-right text-sm font-semibold text-foreground">
+                        {mediaItem === null ? '—' : mediaItem.toFixed(1)}
+                      </div>
                       {!somenteConsulta && (
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center gap-2">
                           <Button variant="outline" size="sm" onClick={() => handleOpenEdit(item)}>
                             <Pencil className="w-4 h-4" />
-                            Editar
                           </Button>
                           <Button variant="destructive" size="sm" onClick={() => handleDelete(item)}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
-                      </TableCell>
                       )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      {somenteConsulta && (
+                        <Link to={`/notas/${item.id}`}>
+                          <Button variant="outline" size="sm">Ver</Button>
+                        </Link>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </CardContent>
         </Card>

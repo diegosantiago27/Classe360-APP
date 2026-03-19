@@ -37,6 +37,20 @@ const parseNomeTurma = (nome: string) => {
 };
 const getSerieNumero = (nomeTurma: string) => nomeTurma.match(/(\d+)/)?.[1] ?? '';
 
+function normalizeText(value?: string): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isProfessorPerfil(perfil: unknown): boolean {
+  if (perfil === UserProfile.PROFESSOR) return true;
+  const normalized = String(perfil ?? '').trim().toUpperCase();
+  return normalized === '3' || normalized === 'PROFESSOR' || normalized === 'ROLE_PROFESSOR';
+}
+
 interface UsuarioApi {
   id: number;
   cpf: string;
@@ -157,10 +171,12 @@ const Turmas: React.FC = () => {
       return turmas;
     }
 
-    if (user.perfil === UserProfile.PROFESSOR) {
+    if (isProfessorPerfil(user.perfil ?? (user as { role?: unknown }).role)) {
+      const idAtual = normalizeText(user.id);
+      if (!idAtual) return [];
       const turmaIdsProfessor = new Set(
         vinculos
-          .filter((v) => v.professorId === user.id || v.professorNome === user.nome)
+          .filter((v) => normalizeText(v.professorId) === idAtual)
           .map((v) => v.turmaId),
       );
       return turmas.filter((turma) => turmaIdsProfessor.has(turma.id));
@@ -201,14 +217,11 @@ const Turmas: React.FC = () => {
         .forEach((v) => {
           (v.alunos ?? []).forEach((a) => {
             const usuario = usuarioPorId.get(a.alunoId);
-            // Evita contar "vinculo fantasma" quando o cadastro oficial do aluno
-            // já está em outra turma.
             if (!usuario) {
               ids.add(a.alunoId);
               return;
             }
-            if (usuario.perfil !== UserProfile.ALUNO || usuario.status !== 'ativo') return;
-            if ((usuario.turmas ?? []).includes(turma.nome)) {
+            if (usuario.perfil === UserProfile.ALUNO && usuario.status === 'ativo') {
               ids.add(a.alunoId);
             }
           });
