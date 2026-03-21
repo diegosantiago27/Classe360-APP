@@ -17,7 +17,8 @@ import {
   disciplinasStorageKey,
   periodosStorageKey,
 } from '@/lib/mockAcademics';
-import { defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -54,6 +55,30 @@ interface Atividade {
 
 const storageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const getTurmaKey = (value?: string) => {
+  const normalized = normalizeText(value).replace(/º/g, 'o').replace(/\s+/g, ' ');
+  const match = normalized.match(/(\d+)\s*(?:o|ano)?\s*([a-z])/i);
+  if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  return normalized.replace(/[^a-z0-9]/g, '');
+};
+
+interface DisciplinaVinculoAtividade {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  alunos?: Array<{ alunoId: string; alunoNome: string }>;
+}
 
 interface AtividadeEntrega {
   id: string;
@@ -192,7 +217,15 @@ const Atividades: React.FC = () => {
     [],
   );
   const turmasDisponiveis = useMemo(
-    () => loadFromStorage<{ nome: string }[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    [],
+  );
+  const usuariosLista = useMemo(
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
+    [],
+  );
+  const vinculosLista = useMemo(
+    () => loadFromStorage<DisciplinaVinculoAtividade[]>(vinculosStorageKey, []),
     [],
   );
   const disciplinaOptions = useMemo(
@@ -207,14 +240,64 @@ const Atividades: React.FC = () => {
     () => turmasDisponiveis.map((item) => item.nome),
     [turmasDisponiveis],
   );
+
+  /** Turmas às quais o aluno pertence (perfil, auth e vínculos com lista de alunos). */
+  const turmasKeysDoAluno = useMemo(() => {
+    if (!isAluno || !user?.id) return null;
+    const keys = new Set<string>();
+    const add = (raw?: string) => {
+      const k = getTurmaKey(raw);
+      if (k) keys.add(k);
+    };
+    const uid = normalizeText(user.id);
+
+    const alunoCadastro = usuariosLista.find((u) => normalizeText(u.id) === uid);
+    (alunoCadastro?.turmas ?? []).forEach((t) => add(t));
+
+    if (user && 'turma' in user && typeof (user as { turma?: string }).turma === 'string') {
+      add((user as { turma?: string }).turma);
+    }
+    if (user.turmaId) {
+      const t = turmasDisponiveis.find((x) => x.id === user.turmaId);
+      if (t?.nome) add(t.nome);
+      add(user.turmaId);
+    }
+
+    vinculosLista.forEach((v) => {
+      const estaNoVinculo = (v.alunos ?? []).some((a) => normalizeText(a.alunoId) === uid);
+      if (estaNoVinculo) {
+        add(v.turmaNome);
+        add(v.turmaId);
+        const nomeTurma = turmasDisponiveis.find((t) => t.id === v.turmaId)?.nome;
+        if (nomeTurma) add(nomeTurma);
+      }
+    });
+
+    return keys;
+  }, [isAluno, user, usuariosLista, turmasDisponiveis, vinculosLista]);
   const hasTurmas = turmaOptions.length > 0;
   const hasDisciplinas = disciplinaOptions.length > 0;
   const hasPeriodos = periodoOptions.length > 0;
 
   const atividadesVisiveis = useMemo(() => {
-    if (!isProfessor || !user?.id) return atividades;
-    return atividades.filter((item) => item.professorId === user.id);
-  }, [atividades, isProfessor, user?.id]);
+    if (isProfessor && user?.id) {
+      return atividades.filter((item) => item.professorId === user.id);
+    }
+    if (isAluno && user?.id) {
+      const keys = turmasKeysDoAluno;
+      if (!keys || keys.size === 0) {
+        return [];
+      }
+      return atividades.filter((item) => keys.has(getTurmaKey(item.turma)));
+    }
+    return atividades;
+  }, [atividades, isProfessor, isAluno, user?.id, turmasKeysDoAluno]);
+
+  const disciplinaOptionsFiltro = useMemo(() => {
+    if (!isAluno) return disciplinaOptions;
+    const usadas = new Set(atividadesVisiveis.map((a) => a.disciplina));
+    return disciplinaOptions.filter((d) => usadas.has(d));
+  }, [isAluno, disciplinaOptions, atividadesVisiveis]);
 
   const atividadesFiltradas = useMemo(() => {
     if (disciplinaSelecionada === 'todas') return atividadesVisiveis;
@@ -573,7 +656,7 @@ const Atividades: React.FC = () => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todas">Todas as materias</SelectItem>
-                {disciplinaOptions.map((disciplina) => (
+                {(isAluno ? disciplinaOptionsFiltro : disciplinaOptions).map((disciplina) => (
                   <SelectItem key={disciplina} value={disciplina}>
                     {disciplina}
                   </SelectItem>
@@ -585,7 +668,9 @@ const Atividades: React.FC = () => {
 
         {atividadesFiltradas.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Nenhuma atividade cadastrada. Clique em "Nova atividade".
+            {isAluno
+              ? 'Nenhuma atividade para a sua turma no momento.'
+              : 'Nenhuma atividade cadastrada. Clique em "Nova atividade".'}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

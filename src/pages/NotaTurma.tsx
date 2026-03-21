@@ -4,8 +4,8 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
-import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -88,49 +88,13 @@ const getTurmaKey = (value?: string) => {
   return normalized.replace(/[^a-z0-9]/g, '');
 };
 
-const defaultLancamentos: Lancamento[] = [
-  {
-    id: 'MAT-9A-1',
-    turma: '9o Ano A',
-    disciplina: 'Matematica',
-    bimestre: '1o Bimestre',
-  },
-  {
-    id: 'MAT-9B-1',
-    turma: '9o Ano B',
-    disciplina: 'Matematica',
-    bimestre: '1o Bimestre',
-  },
-  {
-    id: 'FIS-8A-2',
-    turma: '8o Ano A',
-    disciplina: 'Fisica',
-    bimestre: '2o Bimestre',
-  },
-  {
-    id: 'POR-7C-1',
-    turma: '7o Ano C',
-    disciplina: 'Portugues',
-    bimestre: '1o Bimestre',
-  },
-];
-
-const defaultAlunos: AlunoTurma[] = [
-  { id: 'AL-9A-1', nome: 'Pedro Oliveira', turma: '9o Ano A' },
-  { id: 'AL-9A-2', nome: 'Maria Souza', turma: '9o Ano A' },
-  { id: 'AL-9B-1', nome: 'Joao Pedro', turma: '9o Ano B' },
-  { id: 'AL-9B-2', nome: 'Ana Lima', turma: '9o Ano B' },
-  { id: 'AL-8A-1', nome: 'Lucia Ferreira', turma: '8o Ano A' },
-  { id: 'AL-7C-1', nome: 'Bruno Santos', turma: '7o Ano C' },
-];
-
 const NotaTurma: React.FC = () => {
   const { user } = useAuth();
   const podeEditarNotas = user?.perfil !== UserProfile.SECRETARIA;
   const { id } = useParams();
   const location = useLocation();
   const lancamentos = useMemo(
-    () => loadFromStorage<Lancamento[]>(lancamentosStorageKey, defaultLancamentos),
+    () => loadFromStorage<Lancamento[]>(lancamentosStorageKey, []),
     [],
   );
   const lancamento = useMemo(
@@ -146,7 +110,7 @@ const NotaTurma: React.FC = () => {
     () => loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
   );
   const usuarios = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
     [],
   );
   const vinculos = useMemo(
@@ -154,7 +118,7 @@ const NotaTurma: React.FC = () => {
     [],
   );
   const turmas = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, []),
     [],
   );
   const respostasProvas = useMemo(

@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Send } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Play, Send } from 'lucide-react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
@@ -62,6 +61,10 @@ const provasStorageKey = 'school-compass:provas';
 const respostasStorageKey = 'school-compass:provas-respostas';
 const sessoesStorageKey = 'school-compass:provas-sessoes';
 
+/** Marca que o aluno já iniciou esta prova nesta aba (não pode sair até enviar). */
+const sessaoAlunoProvaKey = (alunoId: string, provaId: string) =>
+  `school-compass:prova-aluno-em-andamento:${alunoId}:${provaId}`;
+
 interface ProvaSessao {
   id: string; // `${provaId}-${alunoId}`
   provaId: string;
@@ -88,6 +91,7 @@ const formatTimeLeft = (totalSeconds: number) => {
 export default function ProvaRealizar() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -108,6 +112,34 @@ export default function ProvaRealizar() {
     const respostas = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
     return respostas.find((item) => item.provaId === id && item.alunoId === user.id) ?? null;
   });
+
+  const [provaIniciada, setProvaIniciada] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!user?.id || !id || !prova) return;
+    if (respostaExistente) {
+      sessionStorage.removeItem(sessaoAlunoProvaKey(user.id, id));
+      setProvaIniciada(false);
+      return;
+    }
+    const key = sessaoAlunoProvaKey(user.id, id);
+    if (sessionStorage.getItem(key) === '1') {
+      setProvaIniciada(true);
+      return;
+    }
+    const st = location.state as { iniciarProva?: boolean } | null;
+    if (st?.iniciarProva) {
+      sessionStorage.setItem(key, '1');
+      setProvaIniciada(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [user?.id, id, prova, respostaExistente, location.pathname, location.state, navigate]);
+
+  const handleIniciarProvaLocal = useCallback(() => {
+    if (!user?.id || !id) return;
+    sessionStorage.setItem(sessaoAlunoProvaKey(user.id, id), '1');
+    setProvaIniciada(true);
+  }, [user?.id, id]);
 
   useEffect(() => {
     if (!user?.id || !id) {
@@ -190,6 +222,8 @@ export default function ProvaRealizar() {
       ...stored.filter((item) => !(item.provaId === prova.id && item.alunoId === user.id)),
     ];
     saveToStorage(respostasStorageKey, updated);
+    sessionStorage.removeItem(sessaoAlunoProvaKey(user.id, prova.id));
+    setProvaIniciada(false);
     setRespostaExistente(novoRegistro);
     toast(
       force
@@ -216,7 +250,7 @@ export default function ProvaRealizar() {
     }
 
     setTimeExpired(false);
-    if (!prova || modoConsulta || !user?.id) {
+    if (!prova || modoConsulta || !user?.id || !provaIniciada) {
       setTempoRestante(null);
       return;
     }
@@ -268,7 +302,38 @@ export default function ProvaRealizar() {
         timerRef.current = null;
       }
     };
-  }, [modoConsulta, prova, submitProva, user?.id]);
+  }, [modoConsulta, prova, provaIniciada, submitProva, user?.id]);
+
+  const provaTravada = provaIniciada && !modoConsulta;
+
+  useEffect(() => {
+    if (!provaTravada) return;
+
+    const rearmHistory = () => {
+      window.history.pushState({ provaLock: true }, '', window.location.href);
+    };
+    rearmHistory();
+
+    const onPopState = () => {
+      rearmHistory();
+      window.alert(
+        'Você precisa enviar a prova para sair. Use o botão "Enviar prova" ao terminar.',
+      );
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [provaTravada]);
+
+  useEffect(() => {
+    if (!provaTravada) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [provaTravada]);
 
   if (!prova) {
     return (
@@ -286,17 +351,82 @@ export default function ProvaRealizar() {
     );
   }
 
+  if (!modoConsulta && !provaIniciada) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-2xl mx-auto space-y-6">
+          <div className="flex items-center gap-3">
+            <Link to="/provas-aluno">
+              <Button variant="ghost" size="icon" type="button">
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="font-display text-3xl font-bold text-foreground">Antes de começar</h1>
+              <p className="text-muted-foreground">
+                {prova.titulo} • {prova.disciplina} • {prova.turma}
+              </p>
+            </div>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Leia com atenção</CardTitle>
+              <CardDescription>
+                Ao iniciar, o menu lateral será ocultado e você só poderá sair após enviar a prova.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                O botão voltar do navegador não encerra a prova. Para concluir, use{' '}
+                <strong className="text-foreground">Enviar prova</strong> no final do questionário.
+              </p>
+              {prova.instrucoes?.trim() ? (
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-4 text-sm whitespace-pre-wrap">
+                  {prova.instrucoes}
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="gradient"
+                className="gap-2 w-full sm:w-auto"
+                onClick={handleIniciarProvaLocal}
+              >
+                <Play className="h-4 w-4" />
+                Iniciar prova
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   const respostasBloqueadas = modoConsulta || timeExpired;
 
   return (
-    <DashboardLayout>
+    <DashboardLayout focusMode={provaTravada}>
       <div className="max-w-3xl mx-auto space-y-6">
+        {provaTravada && (
+          <div
+            role="status"
+            className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+          >
+            <strong>Prova em andamento.</strong> Envie a prova para voltar ao painel. O menu está
+            desativado até o envio.
+          </div>
+        )}
+
         <div className="flex items-center gap-3">
-          <Link to="/provas-aluno">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-          </Link>
+          {!provaTravada ? (
+            <Link to="/provas-aluno">
+              <Button variant="ghost" size="icon" type="button">
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+            </Link>
+          ) : (
+            <div className="w-10 shrink-0" aria-hidden />
+          )}
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">
               {modoConsulta ? 'Prova enviada' : 'Realizar prova'}
@@ -376,11 +506,13 @@ export default function ProvaRealizar() {
               })}
 
               <div className="flex justify-end gap-2">
-                <Link to="/provas-aluno">
-                  <Button type="button" variant="outline">
-                    Voltar
-                  </Button>
-                </Link>
+                {!provaTravada ? (
+                  <Link to="/provas-aluno">
+                    <Button type="button" variant="outline">
+                      Voltar
+                    </Button>
+                  </Link>
+                ) : null}
                 {!respostasBloqueadas && (
                   <Button type="submit" variant="gradient" className="gap-2">
                     <Send className="w-4 h-4" />

@@ -12,8 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
-import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
-import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 
 type LancamentoStatus = 'Pendente' | 'Concluida';
 
@@ -48,42 +48,6 @@ const normalizeText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
 
-const defaultLancamentos: Lancamento[] = [
-  {
-    id: 'MAT-9A-1',
-    turma: '9º Ano A',
-    disciplina: 'Matematica',
-    bimestre: '1º Bimestre',
-    pendentes: 6,
-    status: 'Pendente',
-  },
-  {
-    id: 'MAT-9B-1',
-    turma: '9º Ano B',
-    disciplina: 'Matematica',
-    bimestre: '1º Bimestre',
-    pendentes: 0,
-    status: 'Concluida',
-  },
-  {
-    id: 'FIS-8A-2',
-    turma: '8º Ano A',
-    disciplina: 'Fisica',
-    bimestre: '2º Bimestre',
-    pendentes: 3,
-    status: 'Pendente',
-  },
-  {
-    id: 'POR-7C-1',
-    turma: '7º Ano C',
-    disciplina: 'Portugues',
-    bimestre: '1º Bimestre',
-    pendentes: 0,
-    status: 'Concluida',
-  },
-];
-
-
 const Notas: React.FC = () => {
   const { user } = useAuth();
   const ehProfessor =
@@ -92,7 +56,7 @@ const Notas: React.FC = () => {
   const somenteConsulta =
     user?.perfil === UserProfile.SECRETARIA || user?.perfil === UserProfile.PROFESSOR;
   const [lancamentos, setLancamentos] = useState<Lancamento[]>(
-    () => loadFromStorage<Lancamento[]>(storageKey, defaultLancamentos),
+    () => loadFromStorage<Lancamento[]>(storageKey, []),
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -109,11 +73,11 @@ const Notas: React.FC = () => {
   const [busca, setBusca] = useState('');
   const [statusSelecionado, setStatusSelecionado] = useState<'todos' | 'pendentes' | 'completos'>('todos');
   const disciplinasDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
     [],
   );
   const turmasDisponiveis = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, []),
     [],
   );
   const vinculos = useMemo(

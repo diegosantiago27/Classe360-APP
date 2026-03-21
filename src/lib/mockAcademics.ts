@@ -26,3 +26,8 @@ export const defaultPeriodos: CatalogItem[] = [
   { id: '4b', nome: '4º Bimestre' },
   { id: 'sim', nome: 'Simulado' },
 ];
+
+/** Com API ativa, `loadFromStorage` pode devolver [] se a chave ainda não existe no backend — mantém opções de bimestre nos formulários. */
+export function periodosParaSelecao(loaded: CatalogItem[]): CatalogItem[] {
+  return loaded.length > 0 ? loaded : defaultPeriodos;
+}

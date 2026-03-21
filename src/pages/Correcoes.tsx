@@ -8,10 +8,10 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
-import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
-import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
-import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const normalizeText = (value?: string) =>
@@ -121,15 +121,15 @@ export default function Correcoes() {
   }, []);
 
   const usuarios = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
     [syncSeed],
   );
   const disciplinas = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
     [syncSeed],
   );
   const turmas = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, []),
     [syncSeed],
   );
   const vinculos = useMemo(

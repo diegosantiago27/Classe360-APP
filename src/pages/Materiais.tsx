@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, Clock, MapPin, Users } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { loadFromStorage } from '@/lib/mockStorage';
+import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 
@@ -14,6 +14,15 @@ interface DisciplinaVinculoStorage {
   turmaId: string;
   professorId?: string;
   professorNome?: string;
+}
+
+interface AulaCadastrada {
+  id: string;
+  disciplinaId: string;
+  turmaId: string;
+  dia: string;
+  inicio: string;
+  fim: string;
 }
 
 interface AulaSemana {
@@ -25,12 +34,11 @@ interface AulaSemana {
 }
 
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
-const diasSemana = ['SEGUNDA', 'TERCA', 'QUARTA', 'QUINTA', 'SEXTA'];
-const horariosPorTurno: Record<string, string[]> = {
-  Manha: ['07:30 - 08:20', '08:20 - 09:10', '09:30 - 10:20'],
-  Tarde: ['13:00 - 13:50', '13:50 - 14:40', '14:40 - 15:30'],
-  Noite: ['19:00 - 19:50', '19:50 - 20:40', '20:40 - 21:30'],
-};
+const aulasStorageKey = 'school-compass:grade-aulas';
+
+/** Mesmos valores que Agenda Semanal / cadastro de horários */
+const diasSemana = ['Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta'] as const;
+
 const coresDisciplina = [
   'bg-blue-600',
   'bg-red-600',
@@ -40,49 +48,94 @@ const coresDisciplina = [
   'bg-cyan-600',
 ];
 
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+/** Alinha o texto do dia salvo com a chave usada na grade (Segunda, Terca, …). */
+const resolveDiaGrade = (raw: string): string => {
+  const found = diasSemana.find((d) => normalizeText(d) === normalizeText(raw));
+  return found ?? raw;
+};
+
 const Materiais: React.FC = () => {
   const { user } = useAuth();
-  const disciplinas = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
+  const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(() =>
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
   );
-  const turmas = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-    [],
+  const [turmas, setTurmas] = useState<Turma[]>(() =>
+    loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
   );
-  const vinculos = useMemo(
-    () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
-    [],
+  const [vinculos, setVinculos] = useState<DisciplinaVinculoStorage[]>(() =>
+    loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
   );
+  const [aulasGrade, setAulasGrade] = useState<AulaCadastrada[]>(() =>
+    loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
+  );
+
+  useEffect(() => {
+    const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey, aulasStorageKey];
+    void syncKeysFromBackend(keys).finally(() => {
+      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setVinculos(loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []));
+      setAulasGrade(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
+    });
+  }, []);
+
+  const ehProfessorApi =
+    user?.perfil === UserProfile.PROFESSOR ||
+    String((user as { role?: unknown } | null)?.role ?? '')
+      .trim()
+      .toUpperCase() === 'ROLE_PROFESSOR';
 
   const vinculosProfessor = useMemo(() => {
     if (!user) return [];
-    if (user.perfil !== UserProfile.PROFESSOR) return vinculos;
+    if (!ehProfessorApi) return vinculos;
     return vinculos.filter(
-      (v) => v.professorId === user.id || v.professorNome === user.nome,
+      (v) =>
+        normalizeText(v.professorId) === normalizeText(user.id) ||
+        normalizeText(v.professorNome) === normalizeText(user.nome),
     );
-  }, [user, vinculos]);
+  }, [user, vinculos, ehProfessorApi]);
 
   const aulas = useMemo(() => {
-    return vinculosProfessor
-      .map((v, idx) => {
-        const turma = turmas.find((t) => t.id === v.turmaId);
-        const disciplina = disciplinas.find((d) => d.id === v.disciplinaId);
-        if (!turma || !disciplina) return null;
-        const horarios = horariosPorTurno[turma.turno] ?? horariosPorTurno.Manha;
-        const turnoOffset = turma.turno === 'Manha' ? 0 : turma.turno === 'Tarde' ? 1 : 2;
-        const dia = diasSemana[(idx + turnoOffset) % diasSemana.length];
-        const horario = horarios[idx % horarios.length];
-        return {
-          disciplina: disciplina.nome,
-          turmaNome: turma.nome,
-          turno: turma.turno,
-          dia,
-          horario,
-        } as AulaSemana;
-      })
-      .filter((item): item is AulaSemana => Boolean(item));
-  }, [disciplinas, turmas, vinculosProfessor]);
+    const out: AulaSemana[] = [];
+
+    aulasGrade.forEach((aula) => {
+      const turma = turmas.find((t) => t.id === aula.turmaId);
+      const disciplina = disciplinas.find((d) => d.id === aula.disciplinaId);
+      if (!turma || !disciplina) return;
+
+      const vinculo = vinculos.find(
+        (v) => v.disciplinaId === aula.disciplinaId && v.turmaId === aula.turmaId,
+      );
+
+      if (ehProfessorApi && user) {
+        if (!vinculo) return;
+        const souEu =
+          normalizeText(vinculo.professorId) === normalizeText(user.id) ||
+          normalizeText(vinculo.professorNome) === normalizeText(user.nome);
+        if (!souEu) return;
+      }
+
+      const dia = resolveDiaGrade(aula.dia);
+      if (!diasSemana.includes(dia as (typeof diasSemana)[number])) return;
+
+      out.push({
+        disciplina: disciplina.nome,
+        turmaNome: turma.nome,
+        turno: turma.turno,
+        dia,
+        horario: `${aula.inicio} - ${aula.fim}`,
+      });
+    });
+
+    return out;
+  }, [aulasGrade, disciplinas, turmas, vinculos, ehProfessorApi, user]);
 
   const resumoDisciplinas = useMemo(() => {
     const map = new Map<string, { disciplina: string; turmas: Set<string>; aulas: number }>();
@@ -122,27 +175,44 @@ const Materiais: React.FC = () => {
     return Array.from(map.values());
   }, [aulas, turmas]);
 
+  const temConteudoProfessor =
+    ehProfessorApi && vinculosProfessor.length > 0 && resumoDisciplinas.length === 0;
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
         <div>
-          <h1 className="font-display text-3xl font-bold text-foreground">
-            Minhas Disciplinas
-          </h1>
+          <h1 className="font-display text-3xl font-bold text-foreground">Minhas Disciplinas</h1>
           <p className="text-muted-foreground">
-            Visualize suas disciplinas, grade semanal e turmas atribuidas.
+            Visualize suas disciplinas, grade semanal e turmas atribuidas (dados da agenda institucional).
           </p>
         </div>
 
         {resumoDisciplinas.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Nenhuma disciplina atribuida no momento.
+          <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground space-y-2">
+            {temConteudoProfessor ? (
+              <>
+                <p>
+                  Você tem disciplinas vinculadas, mas ainda <strong>não há horários</strong> na grade.
+                </p>
+                <p>
+                  Peça à secretaria para cadastrar os horários em{' '}
+                  <span className="font-medium text-foreground">Disciplinas</span> (cadastro de horários)
+                  ou confira a <span className="font-medium text-foreground">Agenda semanal</span>.
+                </p>
+              </>
+            ) : (
+              <p>Nenhuma disciplina atribuida no momento.</p>
+            )}
           </div>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
               {resumoDisciplinas.map((item, idx) => (
-                <Card key={item.disciplina} className={`${coresDisciplina[idx % coresDisciplina.length]} text-white border-0`}>
+                <Card
+                  key={item.disciplina}
+                  className={`${coresDisciplina[idx % coresDisciplina.length]} text-white border-0`}
+                >
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">{item.disciplina}</CardTitle>
                     <CardDescription className="text-white/80">
@@ -165,7 +235,7 @@ const Materiais: React.FC = () => {
                 {diasSemana.map((dia) => (
                   <div key={dia} className="space-y-2">
                     <div className="rounded-md bg-blue-700 py-2 text-center text-sm font-bold text-white">
-                      {dia}
+                      {dia.toUpperCase()}
                     </div>
                     {(aulasPorDia.get(dia) ?? []).length === 0 ? (
                       <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
@@ -174,7 +244,7 @@ const Materiais: React.FC = () => {
                     ) : (
                       (aulasPorDia.get(dia) ?? []).map((aula, idx) => (
                         <div
-                          key={`${dia}-${aula.turmaNome}-${aula.disciplina}-${idx}`}
+                          key={`${dia}-${aula.turmaNome}-${aula.disciplina}-${aula.horario}-${idx}`}
                           className={`rounded-md p-3 text-white ${coresDisciplina[idx % coresDisciplina.length]}`}
                         >
                           <p className="font-semibold">{aula.disciplina}</p>
@@ -210,11 +280,14 @@ const Materiais: React.FC = () => {
                       <CardDescription>{item.turma.nome.split(' ')[0]} ano</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
-                      {item.aulas.slice(0, 4).map((aula, idx) => (
-                        <div key={`${item.turma.id}-${idx}`} className="text-muted-foreground flex items-center gap-2">
-                          <CalendarDays className="w-4 h-4" />
-                          <span>{aula.dia}</span>
-                          <Clock className="w-4 h-4" />
+                      {item.aulas.slice(0, 8).map((aula, idx) => (
+                        <div
+                          key={`${item.turma.id}-${idx}`}
+                          className="text-muted-foreground flex flex-wrap items-center gap-2"
+                        >
+                          <CalendarDays className="w-4 h-4 shrink-0" />
+                          <span>{aula.dia.toUpperCase()}</span>
+                          <Clock className="w-4 h-4 shrink-0" />
                           <span>{aula.horario}</span>
                           <span>-</span>
                           <span>{aula.disciplina}</span>
@@ -228,8 +301,8 @@ const Materiais: React.FC = () => {
                     Nenhuma turma atribuida para exibir.
                   </div>
                 )}
-                </div>
               </div>
+            </div>
           </>
         )}
       </div>

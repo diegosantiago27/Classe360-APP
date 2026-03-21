@@ -5,6 +5,14 @@ const getToken = () => {
   return window.localStorage.getItem('token');
 };
 
+const isBackendAuthoritativeKey = (key: string) => key.startsWith('school-compass:');
+
+const getEmptyLikeFallback = <T>(fallback: T): T => {
+  if (Array.isArray(fallback)) return [] as T;
+  if (fallback && typeof fallback === 'object') return {} as T;
+  return fallback;
+};
+
 const pushToBackend = async (key: string, value: unknown) => {
   if (!API_URL) return;
   const token = getToken();
@@ -61,10 +69,20 @@ export const loadFromStorage = <T>(key: string, fallback: T): T => {
 
   try {
     const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
+    if (!raw) {
+      // Modo profissional: com backend configurado, chaves de dominio devem vir do banco.
+      // Evita "ressuscitar" mocks/defaults quando o backend nao possui dados.
+      if (API_URL && isBackendAuthoritativeKey(key)) {
+        return getEmptyLikeFallback(fallback);
+      }
+      return fallback;
+    }
     const parsed = JSON.parse(raw) as T;
     return parsed ?? fallback;
   } catch {
+    if (API_URL && isBackendAuthoritativeKey(key)) {
+      return getEmptyLikeFallback(fallback);
+    }
     return fallback;
   }
 };

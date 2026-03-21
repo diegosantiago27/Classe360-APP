@@ -4,8 +4,8 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadFromStorage } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
-import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
-import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
 
 interface FrequenciaItem {
@@ -58,11 +58,11 @@ const getTurmaKey = (value?: string) => {
 const MinhaFrequencia: React.FC = () => {
   const { user } = useAuth();
   const usuarios = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
     [],
   );
   const disciplinas = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
     [],
   );
   const vinculos = useMemo(

@@ -1,14 +1,14 @@
-import React, { useMemo, useState } from 'react';
-import { Calendar, Search } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { CalendarClock, CheckCircle2, MapPin, Play, Search } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { loadFromStorage } from '@/lib/mockStorage';
-import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 
 interface Prova {
   id: string;
@@ -18,10 +18,20 @@ interface Prova {
   periodo: string;
   data: string;
   horario: string;
+  sala?: string;
+  instrucoes?: string;
   publicada?: boolean;
 }
 
+interface ProvaResposta {
+  id: string;
+  provaId: string;
+  alunoId: string;
+  status?: string;
+}
+
 const provasStorageKey = 'school-compass:provas';
+const respostasStorageKey = 'school-compass:provas-respostas';
 
 const formatDate = (value?: string) => {
   if (!value) return '';
@@ -45,10 +55,28 @@ const getTurmaShort = (value?: string) => {
 
 export default function ProvasAluno() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [materia, setMateria] = useState('');
   const [pesquisaAtiva, setPesquisaAtiva] = useState(false);
+  const [provas, setProvas] = useState<Prova[]>(() => loadFromStorage<Prova[]>(provasStorageKey, []));
+  const [respostas, setRespostas] = useState<ProvaResposta[]>(() =>
+    loadFromStorage<ProvaResposta[]>(respostasStorageKey, []),
+  );
 
-  const provas = useMemo(() => loadFromStorage<Prova[]>(provasStorageKey, []), []);
+  useEffect(() => {
+    void syncKeysFromBackend([provasStorageKey, respostasStorageKey]).finally(() => {
+      setProvas(loadFromStorage<Prova[]>(provasStorageKey, []));
+      setRespostas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
+    });
+  }, []);
+
+  const getRespostaDoAluno = useCallback(
+    (provaId: string) =>
+      user?.id
+        ? respostas.find((r) => r.provaId === provaId && r.alunoId === user.id)
+        : undefined,
+    [respostas, user?.id],
+  );
 
   const disciplinasDisponiveis = useMemo(() => {
     const disciplinas = Array.from(new Set(provas.map((p) => p.disciplina).filter(Boolean)));
@@ -111,28 +139,72 @@ export default function ProvasAluno() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {provasFiltradas.map((prova) => (
-              <Card
-                key={prova.id}
-                className={cn('card-hover cursor-pointer')}
-                onClick={() => navigate(`/provas/${prova.id}`)}
-              >
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline">Disponível</Badge>
-                    <span className="text-xs text-muted-foreground">{getTurmaShort(prova.turma)}</span>
-                  </div>
-                  <CardTitle className="text-lg">{prova.titulo}</CardTitle>
-                  <CardDescription>{prova.disciplina}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Calendar className="w-4 h-4" />
-                    {formatDate(prova.data)} {prova.horario ? `• ${prova.horario}` : ''}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+            {provasFiltradas.map((prova) => {
+              const entrega = getRespostaDoAluno(prova.id);
+              const statusAluno = entrega ? 'Entregue' : 'Pendente';
+              const dataExibicao = formatDate(prova.data) || prova.data || 'Sem data';
+              const horarioExibicao = prova.horario || '';
+              return (
+                <Card key={prova.id} className="card-hover">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <Badge variant={statusAluno === 'Pendente' ? 'destructive' : 'secondary'}>
+                        {statusAluno}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {prova.turma?.trim() || getTurmaShort(prova.turma)}
+                      </span>
+                    </div>
+                    <CardTitle className="text-lg">{prova.titulo}</CardTitle>
+                    <CardDescription>
+                      {prova.disciplina} • {prova.periodo?.trim() || 'Período'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {prova.instrucoes?.trim() ? (
+                      <div className="text-sm text-muted-foreground line-clamp-3">{prova.instrucoes}</div>
+                    ) : null}
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <CalendarClock className="w-4 h-4" />
+                      {dataExibicao}
+                      {horarioExibicao ? ` • ${horarioExibicao}` : ''}
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <MapPin className="w-4 h-4" />
+                      {prova.sala?.trim() || ''}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      {entrega ? (
+                        <Link to={`/provas/${prova.id}`}>
+                          <Button size="sm" variant="outline" className="w-full sm:w-auto">
+                            Ver envio
+                          </Button>
+                        </Link>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="gradient"
+                          size="sm"
+                          className="gap-2 w-full sm:w-auto"
+                          onClick={() =>
+                            navigate(`/provas/${prova.id}`, { state: { iniciarProva: true } })
+                          }
+                        >
+                          <Play className="h-4 w-4" />
+                          Iniciar prova
+                        </Button>
+                      )}
+                    </div>
+                    {statusAluno === 'Entregue' && (
+                      <div className="flex items-center gap-2 text-xs text-success">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Entregue com sucesso
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>

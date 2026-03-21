@@ -7,12 +7,11 @@ import { loadFromStorage } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   MateriaAluno,
-  defaultMateriasAluno,
 } from '@/lib/mockMateriasAluno';
 import { Link } from 'react-router-dom';
-import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
-import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
-import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 
 interface AlunoVinculado {
   alunoId: string;
@@ -74,15 +73,15 @@ const getSerieFromTurma = (turmaNome: string) => {
 const MinhasMaterias: React.FC = () => {
   const { user } = useAuth();
   const usuarios = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
     [],
   );
   const disciplinas = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
     [],
   );
   const turmas = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, []),
     [],
   );
   const vinculos = useMemo(
@@ -119,8 +118,7 @@ const MinhasMaterias: React.FC = () => {
     });
 
     if (vinculosAluno.length === 0) {
-      return loadFromStorage<MateriaAluno[]>('school-compass:minhas-materias', defaultMateriasAluno)
-        .filter((item) => !item.alunoId || item.alunoId === user.id);
+      return [];
     }
 
     const unique = new Map<string, MateriaAluno>();
@@ -172,7 +170,7 @@ const MinhasMaterias: React.FC = () => {
     return Array.from(unique.values()).sort((a, b) =>
       a.disciplina.localeCompare(b.disciplina, 'pt-BR', { sensitivity: 'base' }),
     );
-  }, [alunoAtual?.turmas, atividades, defaultMateriasAluno, disciplinas, entregas, presencas, turmas, user?.id, vinculos]);
+  }, [alunoAtual?.turmas, atividades, disciplinas, entregas, presencas, turmas, user?.id, vinculos]);
 
   const materiasFiltradas = useMemo(
     () => materias.filter((item) => !item.alunoId || item.alunoId === user?.id),

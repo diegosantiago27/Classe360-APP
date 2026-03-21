@@ -1,12 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import StatCard from '@/components/common/StatCard';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import {
   BookOpen,
   Users,
@@ -50,6 +54,79 @@ interface Prova {
 
 const provasStorageKey = 'school-compass:provas';
 const respostasStorageKey = 'school-compass:provas-respostas';
+const notasAlunosStorageKey = 'school-compass:notas-alunos';
+const presencasStorageKey = 'school-compass:frequencia-diaria';
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const aulasStorageKey = 'school-compass:grade-aulas';
+const avisosStorageKey = 'school-compass:avisos';
+
+interface NotaAluno {
+  id: string;
+  alunoId: string;
+  alunoNome: string;
+  turma: string;
+  disciplina: string;
+  bimestre: string;
+  trabalhosNota?: number | null;
+  provasNota?: number | null;
+  nota: number | null;
+}
+
+interface AlunoVinculado {
+  alunoId: string;
+  alunoNome: string;
+}
+
+interface DisciplinaVinculoDash {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  alunos?: AlunoVinculado[];
+}
+
+interface AulaCadastrada {
+  id: string;
+  disciplinaId: string;
+  turmaId: string;
+  dia: string;
+  inicio: string;
+  fim: string;
+}
+
+interface RegistroPresenca {
+  id?: string;
+  turma: string;
+  alunoId: string;
+  alunoNome?: string;
+  data?: string;
+  status: 'Presente' | 'Falta';
+}
+
+interface AvisoItem {
+  id: string;
+  titulo: string;
+  descricao?: string;
+  data: string;
+  nivel?: string;
+}
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const getTurmaKey = (value?: string) => {
+  const normalized = normalizeText(value).replace(/º/g, 'o').replace(/\s+/g, ' ');
+  const match = normalized.match(/(\d+)\s*(?:o|ano)?\s*([a-z])/i);
+  if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  return normalized.replace(/[^a-z0-9]/g, '');
+};
+
+const diasAgenda = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
 
 interface ProvaRespostaItem {
   questaoId: string;
@@ -69,8 +146,8 @@ interface ProvaResposta {
   disciplina: string;
   status: 'Enviado' | 'Corrigido';
   respostas: ProvaRespostaItem[];
-  pontosMaximos: number;
-  pontosObtidos: number;
+  pontosMaximos?: number;
+  pontosObtidos?: number;
   notaFinal?: number | null;
   enviadoEm: string;
   corrigidoEm?: string;
@@ -78,58 +155,312 @@ interface ProvaResposta {
 
 const AlunoDashboard: React.FC = () => {
   const { user } = useAuth();
+  const [provasList, setProvasList] = useState<Prova[]>(() => loadFromStorage<Prova[]>(provasStorageKey, []));
   const [respostasRegistradas, setRespostasRegistradas] = useState<ProvaResposta[]>(
     () => loadFromStorage<ProvaResposta[]>(respostasStorageKey, []),
   );
+  const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(() =>
+    loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
+  );
+  const [presencas, setPresencas] = useState<RegistroPresenca[]>(() =>
+    loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
+  );
+  const [vinculos, setVinculos] = useState<DisciplinaVinculoDash[]>(() =>
+    loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []),
+  );
+  const [turmasList, setTurmasList] = useState<Turma[]>(() =>
+    loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+  );
+  const [disciplinasList, setDisciplinasList] = useState<CatalogItem[]>(() =>
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+  );
+  const [usuarios, setUsuarios] = useState<StoredUser[]>(() =>
+    loadFromStorage<StoredUser[]>(usersStorageKey, []),
+  );
+  const [aulasGrade, setAulasGrade] = useState<AulaCadastrada[]>(() =>
+    loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
+  );
+  const [avisosLista, setAvisosLista] = useState<AvisoItem[]>(() =>
+    loadFromStorage<AvisoItem[]>(avisosStorageKey, []),
+  );
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [provaSelecionada, setProvaSelecionada] = useState<Prova | null>(null);
   const [respostasDraft, setRespostasDraft] = useState<Record<string, ProvaRespostaItem>>({});
   const [modoConsulta, setModoConsulta] = useState(false);
+
+  useEffect(() => {
+    const keys = [
+      provasStorageKey,
+      respostasStorageKey,
+      notasAlunosStorageKey,
+      presencasStorageKey,
+      vinculosStorageKey,
+      turmasStorageKey,
+      disciplinasStorageKey,
+      usersStorageKey,
+      aulasStorageKey,
+      avisosStorageKey,
+    ];
+    void syncKeysFromBackend(keys).finally(() => {
+      setProvasList(loadFromStorage<Prova[]>(provasStorageKey, []));
+      setRespostasRegistradas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
+      setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
+      setPresencas(loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []));
+      setVinculos(loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []));
+      setTurmasList(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setDisciplinasList(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, []));
+      setAulasGrade(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
+      setAvisosLista(loadFromStorage<AvisoItem[]>(avisosStorageKey, []));
+    });
+  }, []);
+
+  const alunoAtual = useMemo(
+    () => usuarios.find((u) => u.id === user?.id) ?? null,
+    [usuarios, user?.id],
+  );
+
   const turmaReferencia = useMemo(() => {
     if (user && 'turma' in user && typeof user.turma === 'string' && user.turma.trim()) {
-      return user.turma;
+      return user.turma.trim();
     }
     if (user?.turmaId) {
+      const t = turmasList.find((x) => x.id === user.turmaId);
+      if (t?.nome?.trim()) return t.nome.trim();
       const match = user.turmaId.match(/^(\d+)\s*([a-z])$/i);
       if (match) {
         return `${match[1]}º Ano ${match[2].toUpperCase()}`;
       }
       return user.turmaId;
     }
-    return '9º Ano A';
-  }, [user]);
+    const primeira = alunoAtual?.turmas?.find((x) => x.trim());
+    if (primeira) return primeira.trim();
+    return '—';
+  }, [user, turmasList, alunoAtual]);
+
+  const turmaKeyAluno = useMemo(() => getTurmaKey(turmaReferencia), [turmaReferencia]);
 
   const provasDaTurma = useMemo(() => {
-    const provas = loadFromStorage<Prova[]>(provasStorageKey, []);
-    const normalize = (value: string) =>
-      value.toLowerCase().replace(/ano/g, '').replace(/[^a-z0-9]/g, '');
-    const turmaNormalizada = normalize(turmaReferencia);
-    return provas
-      .filter((prova) => normalize(prova.turma) === turmaNormalizada)
+    return provasList
+      .filter((prova) => getTurmaKey(prova.turma) === turmaKeyAluno)
       .filter((prova) => prova.publicada)
       .filter((prova) => prova.status === 'Agendada')
-      .sort((a, b) => a.data.localeCompare(b.data));
-  }, [turmaReferencia]);
+      .sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  }, [provasList, turmaKeyAluno]);
 
-  const getRespostaDaProva = (provaId: string) =>
-    respostasRegistradas.find(
-      (resposta) => resposta.provaId === provaId && resposta.alunoId === user?.id,
+  const getRespostaDaProva = (provaId: string) => {
+    const uid = normalizeText(user?.id);
+    return respostasRegistradas.find(
+      (resposta) => resposta.provaId === provaId && normalizeText(resposta.alunoId) === uid,
     );
+  };
 
   const provasDisponiveis = useMemo(
     () => provasDaTurma.filter((prova) => !getRespostaDaProva(prova.id)),
-    [provasDaTurma, respostasRegistradas, user],
+    [provasDaTurma, respostasRegistradas, user?.id],
   );
 
-  const provasRealizadas = useMemo(
-    () => respostasRegistradas.filter((resposta) => resposta.alunoId === user?.id),
-    [respostasRegistradas, user],
+  const provasRealizadas = useMemo(() => {
+    const uid = normalizeText(user?.id);
+    return respostasRegistradas.filter((resposta) => normalizeText(resposta.alunoId) === uid);
+  }, [respostasRegistradas, user?.id]);
+
+  const provasPorId = useMemo(
+    () => new Map(provasList.map((prova) => [prova.id, prova])),
+    [provasList],
   );
 
-  const provasPorId = useMemo(() => {
-    const provas = loadFromStorage<Prova[]>(provasStorageKey, []);
-    return new Map(provas.map((prova) => [prova.id, prova]));
-  }, [turmaReferencia, respostasRegistradas]);
+  const notasDoAluno = useMemo(() => {
+    const uid = normalizeText(user?.id);
+    if (!uid) return [];
+    return notasAlunos.filter((n) => normalizeText(n.alunoId) === uid);
+  }, [notasAlunos, user?.id]);
+
+  const mediasNumericas = useMemo(() => {
+    return notasDoAluno
+      .map((n) => {
+        if (typeof n.nota === 'number') return n.nota;
+        const t = n.trabalhosNota;
+        const p = n.provasNota;
+        if (typeof t === 'number' && typeof p === 'number') return Math.round(((t + p) / 2) * 10) / 10;
+        if (typeof t === 'number') return t;
+        if (typeof p === 'number') return p;
+        return null;
+      })
+      .filter((m): m is number => typeof m === 'number' && !Number.isNaN(m));
+  }, [notasDoAluno]);
+
+  const mediaGeralAluno = useMemo(() => {
+    if (mediasNumericas.length === 0) return 0;
+    const soma = mediasNumericas.reduce((a, b) => a + b, 0);
+    return Math.round((soma / mediasNumericas.length) * 10) / 10;
+  }, [mediasNumericas]);
+
+  const mediaEvolucaoPct = useMemo(() => {
+    if (mediasNumericas.length < 2) return undefined;
+    const sorted = [...notasDoAluno]
+      .map((n) => {
+        let m: number | null = null;
+        if (typeof n.nota === 'number') m = n.nota;
+        else {
+          const t = n.trabalhosNota;
+          const p = n.provasNota;
+          if (typeof t === 'number' && typeof p === 'number') m = Math.round(((t + p) / 2) * 10) / 10;
+          else if (typeof t === 'number') m = t;
+          else if (typeof p === 'number') m = p;
+        }
+        return { key: `${n.disciplina}-${n.bimestre}`, m };
+      })
+      .filter((x): x is { key: string; m: number } => typeof x.m === 'number')
+      .sort((a, b) => a.key.localeCompare(b.key, 'pt-BR'));
+    if (sorted.length < 2) return undefined;
+    const prev = sorted[sorted.length - 2].m;
+    const last = sorted[sorted.length - 1].m;
+    if (prev <= 0) return undefined;
+    return Math.round(((last - prev) / prev) * 1000) / 10;
+  }, [notasDoAluno]);
+
+  const frequenciaGeralPct = useMemo(() => {
+    const uid = normalizeText(user?.id);
+    if (!uid) return null;
+    const regs = presencas.filter((p) => normalizeText(p.alunoId) === uid);
+    if (regs.length === 0) return null;
+    const presentes = regs.filter((p) => p.status === 'Presente').length;
+    return Math.round((presentes / regs.length) * 1000) / 10;
+  }, [presencas, user?.id]);
+
+  const materiasReais = useMemo(() => {
+    if (!user?.id) return [];
+    const turmaKeysAluno = new Set((alunoAtual?.turmas ?? []).map((t) => getTurmaKey(t)));
+    if (turmaKeyAluno) turmaKeysAluno.add(turmaKeyAluno);
+
+    const vinculosAluno = vinculos.filter((v) => {
+      const isAlunoNoVinculo = (v.alunos ?? []).some((a) => normalizeText(a.alunoId) === normalizeText(user.id));
+      const turmaNome = turmasList.find((t) => t.id === v.turmaId)?.nome ?? v.turmaNome;
+      const isTurmaDoAluno = turmaKeysAluno.has(getTurmaKey(turmaNome));
+      return isAlunoNoVinculo || isTurmaDoAluno;
+    });
+
+    const notaPorDisciplina = (discNome: string) => {
+      const key = normalizeText(discNome);
+      const matches = notasDoAluno.filter((n) => normalizeText(n.disciplina) === key);
+      if (matches.length === 0) return null;
+      const medias = matches
+        .map((n) => {
+          if (typeof n.nota === 'number') return n.nota;
+          const t = n.trabalhosNota;
+          const p = n.provasNota;
+          if (typeof t === 'number' && typeof p === 'number') return (t + p) / 2;
+          if (typeof t === 'number') return t;
+          if (typeof p === 'number') return p;
+          return null;
+        })
+        .filter((m): m is number => typeof m === 'number');
+      if (medias.length === 0) return null;
+      return Math.round((medias.reduce((a, b) => a + b, 0) / medias.length) * 10) / 10;
+    };
+
+    const unique = new Map<
+      string,
+      { id: string; nome: string; professor: string; nota: number | null; frequencia: number }
+    >();
+
+    vinculosAluno.forEach((v) => {
+      const turmaNome = turmasList.find((t) => t.id === v.turmaId)?.nome ?? v.turmaNome ?? v.turmaId;
+      const disciplinaNome =
+        disciplinasList.find((d) => d.id === v.disciplinaId)?.nome ?? v.disciplinaId;
+      const turmaKey = getTurmaKey(turmaNome);
+      const presencasAluno = presencas.filter(
+        (p) => normalizeText(p.alunoId) === normalizeText(user.id) && getTurmaKey(p.turma) === turmaKey,
+      );
+      const faltas = presencasAluno.filter((p) => p.status === 'Falta').length;
+      const presencaPercentual =
+        presencasAluno.length > 0
+          ? Math.round(((presencasAluno.length - faltas) / presencasAluno.length) * 1000) / 10
+          : 0;
+
+      const id = `${v.disciplinaId}-${v.turmaId || turmaNome}`;
+      unique.set(id, {
+        id,
+        nome: disciplinaNome,
+        professor: v.professorNome?.trim() ? `Prof. ${v.professorNome}` : 'Professor',
+        nota: notaPorDisciplina(disciplinaNome),
+        frequencia: presencaPercentual,
+      });
+    });
+
+    return Array.from(unique.values()).sort((a, b) =>
+      a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }),
+    );
+  }, [
+    alunoAtual?.turmas,
+    disciplinasList,
+    notasDoAluno,
+    presencas,
+    turmasList,
+    turmaKeyAluno,
+    user?.id,
+    vinculos,
+  ]);
+
+  const qtdMaterias = materiasReais.length;
+
+  const diaHojeNome = useMemo(() => diasAgenda[new Date().getDay()], []);
+
+  const aulasHojeReal = useMemo(() => {
+    return aulasGrade
+      .filter((a) => a.dia === diaHojeNome && getTurmaKey(a.turmaId) === turmaKeyAluno)
+      .map((a) => {
+        const disc =
+          disciplinasList.find((d) => d.id === a.disciplinaId)?.nome ?? a.disciplinaId;
+        const turmaNome = turmasList.find((t) => t.id === a.turmaId)?.nome ?? a.turmaId;
+        const v = vinculos.find(
+          (x) => x.turmaId === a.turmaId && x.disciplinaId === a.disciplinaId,
+        );
+        const professor = v?.professorNome?.trim()
+          ? `Prof. ${v.professorNome}`
+          : 'Professor';
+        return {
+          materia: disc,
+          horario: `${a.inicio} - ${a.fim}`,
+          sala: turmaNome,
+          professor,
+        };
+      })
+      .sort((x, y) => x.horario.localeCompare(y.horario));
+  }, [aulasGrade, diaHojeNome, disciplinasList, turmaKeyAluno, turmasList, vinculos]);
+
+  const avisosRecentesReal = useMemo(
+    () =>
+      [...avisosLista]
+        .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+        .slice(0, 6)
+        .map((a) => ({
+          titulo: a.titulo,
+          data: a.data?.slice(0, 10) ?? '',
+          urgente: a.nivel === 'Urgente',
+        })),
+    [avisosLista],
+  );
+
+  const colegasReal = useMemo(() => {
+    if (!user?.id || !alunoAtual) return [];
+    const minhasTurmas = new Set((alunoAtual.turmas ?? []).map((t) => getTurmaKey(t)));
+    if (turmaKeyAluno) minhasTurmas.add(turmaKeyAluno);
+    return usuarios
+      .filter(
+        (u) =>
+          u.perfil === UserProfile.ALUNO &&
+          u.id !== user.id &&
+          (u.turmas ?? []).some((t) => minhasTurmas.has(getTurmaKey(t))),
+      )
+      .slice(0, 16)
+      .map((u) => ({
+        nome: u.nome,
+        avatar: (u.nome?.trim().charAt(0) || '?').toUpperCase(),
+      }));
+  }, [usuarios, user?.id, alunoAtual, turmaKeyAluno]);
 
   const handleOpenProva = (prova: Prova) => {
     const respostaExistente = getRespostaDaProva(prova.id);
@@ -237,36 +568,6 @@ const AlunoDashboard: React.FC = () => {
     setModoConsulta(true);
   };
 
-  const materias = [
-    { nome: 'Matemática', professor: 'Prof. Ana Costa', nota: 8.5, frequencia: 95 },
-    { nome: 'Português', professor: 'Prof. Carlos Mendes', nota: 7.8, frequencia: 92 },
-    { nome: 'História', professor: 'Prof. Maria Santos', nota: 9.0, frequencia: 98 },
-    { nome: 'Geografia', professor: 'Prof. João Lima', nota: 8.2, frequencia: 94 },
-    { nome: 'Física', professor: 'Prof. Ana Costa', nota: 7.5, frequencia: 90 },
-    { nome: 'Química', professor: 'Prof. Roberto Silva', nota: 8.0, frequencia: 93 },
-  ];
-
-  const aulasHoje = [
-    { materia: 'Matemática', horario: '07:30 - 08:20', sala: 'Sala 12', professor: 'Prof. Ana' },
-    { materia: 'Português', horario: '08:20 - 09:10', sala: 'Sala 12', professor: 'Prof. Carlos' },
-    { materia: 'História', horario: '09:30 - 10:20', sala: 'Sala 12', professor: 'Prof. Maria' },
-    { materia: 'Educação Física', horario: '10:20 - 11:10', sala: 'Quadra', professor: 'Prof. Paulo' },
-  ];
-
-  const avisosRecentes = [
-    { titulo: 'Reunião de pais', data: '20/01', urgente: true },
-    { titulo: 'Prova de Matemática', data: '22/01', urgente: true },
-    { titulo: 'Feira de Ciências', data: '28/01', urgente: false },
-  ];
-
-  const colegas = [
-    { nome: 'Lucas Silva', avatar: 'L' },
-    { nome: 'Maria Souza', avatar: 'M' },
-    { nome: 'João Pedro', avatar: 'J' },
-    { nome: 'Ana Clara', avatar: 'A' },
-    { nome: 'Rafael Costa', avatar: 'R' },
-  ];
-
   return (
     <DashboardLayout>
       <div className="space-y-8">
@@ -300,29 +601,29 @@ const AlunoDashboard: React.FC = () => {
           <StatCard
             icon={Award}
             title="Média Geral"
-            value="8.2"
-            change={5.1}
+            value={mediaGeralAluno > 0 ? String(mediaGeralAluno) : '—'}
+            change={mediaEvolucaoPct}
             variant="success"
             delay={0}
           />
           <StatCard
             icon={UserCheck}
             title="Frequência"
-            value="94%"
+            value={frequenciaGeralPct !== null ? `${frequenciaGeralPct}%` : '—'}
             variant="primary"
             delay={100}
           />
           <StatCard
             icon={BookOpen}
             title="Matérias"
-            value="10"
+            value={qtdMaterias > 0 ? String(qtdMaterias) : '—'}
             variant="accent"
             delay={200}
           />
           <StatCard
             icon={FileText}
             title="Provas Próximas"
-            value="3"
+            value={String(provasDisponiveis.length)}
             variant="warning"
             delay={300}
           />
@@ -446,7 +747,13 @@ const AlunoDashboard: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="text-xs text-muted-foreground">
-                            {resposta.pontosObtidos}/{resposta.pontosMaximos} pts
+                            {typeof resposta.pontosMaximos === 'number' &&
+                            resposta.pontosMaximos > 0 &&
+                            typeof resposta.pontosObtidos === 'number'
+                              ? `${resposta.pontosObtidos}/${resposta.pontosMaximos} pts`
+                              : typeof resposta.pontosObtidos === 'number'
+                                ? `${resposta.pontosObtidos} pts`
+                                : '—'}
                           </div>
                           <Button
                             size="sm"
@@ -454,7 +761,7 @@ const AlunoDashboard: React.FC = () => {
                             onClick={() => prova && handleOpenProva(prova)}
                             disabled={!prova}
                           >
-                            Ver prova
+                            Ver envio
                           </Button>
                         </div>
                       </div>
@@ -474,23 +781,32 @@ const AlunoDashboard: React.FC = () => {
               Aulas de Hoje
             </h3>
             <div className="space-y-3">
-              {aulasHoje.map((aula, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="text-center min-w-[80px] p-2 rounded-lg bg-aluno-light">
-                      <p className="text-xs text-muted-foreground">Horário</p>
-                      <p className="text-sm font-semibold text-aluno">{aula.horario}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium">{aula.materia}</p>
-                      <p className="text-sm text-muted-foreground">{aula.professor} • {aula.sala}</p>
+              {aulasHojeReal.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  Nenhuma aula cadastrada para hoje na sua turma (grade horária em{' '}
+                  <span className="font-medium text-foreground">Agenda</span>).
+                </div>
+              ) : (
+                aulasHojeReal.map((aula, index) => (
+                  <div
+                    key={`${aula.materia}-${aula.horario}-${index}`}
+                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="text-center min-w-[80px] p-2 rounded-lg bg-aluno-light">
+                        <p className="text-xs text-muted-foreground">Horário</p>
+                        <p className="text-sm font-semibold text-aluno">{aula.horario}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium">{aula.materia}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {aula.professor} • {aula.sala}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
@@ -503,20 +819,24 @@ const AlunoDashboard: React.FC = () => {
                 Avisos
               </h3>
               <div className="space-y-3">
-                {avisosRecentes.map((aviso, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      {aviso.urgente && (
-                        <span className="w-2 h-2 rounded-full bg-destructive flex-shrink-0" />
-                      )}
-                      <span className="text-sm font-medium">{aviso.titulo}</span>
+                {avisosRecentesReal.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhum aviso no momento.</p>
+                ) : (
+                  avisosRecentesReal.map((aviso, index) => (
+                    <div
+                      key={`${aviso.titulo}-${index}`}
+                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {aviso.urgente && (
+                          <span className="w-2 h-2 rounded-full bg-destructive flex-shrink-0" />
+                        )}
+                        <span className="text-sm font-medium">{aviso.titulo}</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{aviso.data}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{aviso.data}</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
@@ -527,20 +847,23 @@ const AlunoDashboard: React.FC = () => {
                 Colegas de Turma
               </h3>
               <div className="flex flex-wrap gap-2">
-                {colegas.map((colega, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full bg-muted/50 hover:bg-muted transition-colors"
-                  >
-                    <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
-                      {colega.avatar}
+                {colegasReal.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhum colega na mesma turma encontrado no cadastro.
+                  </p>
+                ) : (
+                  colegasReal.map((colega, index) => (
+                    <div
+                      key={`${colega.nome}-${index}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-full bg-muted/50 hover:bg-muted transition-colors"
+                    >
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
+                        {colega.avatar}
+                      </div>
+                      <span className="text-sm">{colega.nome}</span>
                     </div>
-                    <span className="text-sm">{colega.nome}</span>
-                  </div>
-                ))}
-                <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-muted/30 text-muted-foreground">
-                  <span className="text-sm">+27 mais</span>
-                </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -553,39 +876,54 @@ const AlunoDashboard: React.FC = () => {
               <BookOpen className="w-5 h-5 text-primary" />
               Minhas Matérias
             </h3>
-            <Button variant="ghost" size="sm">
-              Ver detalhes
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
+            <Link to="/minhas-materias">
+              <Button variant="ghost" size="sm" type="button">
+                Ver detalhes
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {materias.map((materia, index) => (
-              <div
-                key={index}
-                className="p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-semibold text-foreground">{materia.nome}</h4>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    materia.nota >= 7 
-                      ? 'bg-success/10 text-success' 
-                      : 'bg-destructive/10 text-destructive'
-                  }`}>
-                    Nota: {materia.nota}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground mb-2">{materia.professor}</p>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-primary rounded-full transition-all duration-500"
-                      style={{ width: `${materia.frequencia}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-muted-foreground">{materia.frequencia}%</span>
-                </div>
+            {materiasReais.length === 0 ? (
+              <div className="col-span-full rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                Nenhuma matéria vinculada à sua turma. Os professores precisam cadastrar vínculos em{' '}
+                <strong className="text-foreground">Disciplinas</strong>.
               </div>
-            ))}
+            ) : (
+              materiasReais.map((materia) => (
+                <div
+                  key={materia.id}
+                  className="p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold text-foreground">{materia.nome}</h4>
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        materia.nota === null
+                          ? 'bg-muted text-muted-foreground'
+                          : materia.nota >= 7
+                            ? 'bg-success/10 text-success'
+                            : 'bg-destructive/10 text-destructive'
+                      }`}
+                    >
+                      {materia.nota === null ? 'Nota: —' : `Nota: ${materia.nota.toFixed(1)}`}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-2">{materia.professor}</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, materia.frequencia)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {materia.frequencia > 0 ? `${materia.frequencia}%` : '—'}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

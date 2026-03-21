@@ -5,11 +5,21 @@ import { cn } from '@/lib/utils';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
+  /** Oculta sidebar e cabeçalho (ex.: prova em andamento — aluno não deve sair pelo menu). */
+  focusMode?: boolean;
 }
 
-const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
+const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, focusMode }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  if (focusMode) {
+    return (
+      <div className="min-h-screen bg-background">
+        <main className="min-h-screen p-4 md:p-6 lg:p-8">{children}</main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -10,15 +10,36 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import {
   CatalogItem,
   defaultDisciplinas,
   defaultPeriodos,
   disciplinasStorageKey,
+  periodosParaSelecao,
   periodosStorageKey,
 } from '@/lib/mockAcademics';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
+
+const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+
+function normalizeText(value?: string): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+interface DisciplinaVinculo {
+  disciplinaId: string;
+  turmaId: string;
+  turmaNome: string;
+  professorId: string;
+  professorNome: string;
+  disciplinaNome?: string;
+}
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
 
@@ -33,6 +54,8 @@ interface QuestaoDraft {
 
 interface Prova {
   id: string;
+  professorId?: string;
+  professorNome?: string;
   titulo: string;
   turma: string;
   disciplina: string;
@@ -60,8 +83,8 @@ const NovaProva: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [disciplina, setDisciplina] = useState('');
-  const [turma, setTurma] = useState('');
+  const [disciplinaId, setDisciplinaId] = useState('');
+  const [turmaId, setTurmaId] = useState('');
   const [turno, setTurno] = useState('');
   const [periodo, setPeriodo] = useState('');
   const [data, setData] = useState('');
@@ -80,18 +103,73 @@ const NovaProva: React.FC = () => {
     },
   ]);
 
-  const disciplinasDisponiveis = useMemo(
+  const [disciplinasDisponiveis, setDisciplinasDisponiveis] = useState<CatalogItem[]>(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
   );
-  const periodosDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
-    [],
+  const [turmasDisponiveis, setTurmasDisponiveis] = useState<Turma[]>(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+  );
+  const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
+    () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
+  );
+  const [periodosDisponiveis, setPeriodosDisponiveis] = useState<CatalogItem[]>(() =>
+    periodosParaSelecao(loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos)),
   );
   const instituicao = useMemo(() => {
     const dados = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
     return dados.nome?.trim() || defaultInstituicao.nome;
   }, []);
+
+  useEffect(() => {
+    const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey, periodosStorageKey];
+    void syncKeysFromBackend(keys).finally(() => {
+      setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+      setPeriodosDisponiveis(
+        periodosParaSelecao(loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos)),
+      );
+    });
+  }, []);
+
+  const professorVinculos = useMemo(() => {
+    if (!user?.id) return [];
+    const idAtual = normalizeText(user.id);
+    if (!idAtual) return [];
+    return vinculos.filter((v) => normalizeText(v.professorId) === idAtual);
+  }, [vinculos, user?.id]);
+
+  const disciplinasFiltradas = useMemo(() => {
+    if (professorVinculos.length === 0) return disciplinasDisponiveis;
+    const ids = new Set(professorVinculos.map((v) => v.disciplinaId));
+    return disciplinasDisponiveis.filter((d) => ids.has(d.id));
+  }, [disciplinasDisponiveis, professorVinculos]);
+
+  const turmasFiltradas = useMemo(() => {
+    if (!disciplinaId) return [];
+    const disciplinaSelecionada = disciplinasDisponiveis.find((d) => d.id === disciplinaId);
+    const disciplinaNomeSelecionada = normalizeText(disciplinaSelecionada?.nome);
+
+    const vinculosDaDisciplina = professorVinculos.filter((v) => {
+      const matchPorId = normalizeText(v.disciplinaId) === normalizeText(disciplinaId);
+      const matchPorNome =
+        disciplinaNomeSelecionada &&
+        normalizeText(v.disciplinaNome) === disciplinaNomeSelecionada;
+      return matchPorId || Boolean(matchPorNome);
+    });
+
+    const turmaIds = new Set(vinculosDaDisciplina.map((v) => normalizeText(v.turmaId)));
+    const turmaNomes = new Set(vinculosDaDisciplina.map((v) => normalizeText(v.turmaNome)));
+
+    return turmasDisponiveis.filter(
+      (t) => turmaIds.has(normalizeText(t.id)) || turmaNomes.has(normalizeText(t.nome)),
+    );
+  }, [disciplinaId, disciplinasDisponiveis, professorVinculos, turmasDisponiveis]);
+
+  const turnoPorTurma = useMemo(
+    () => Object.fromEntries(turmasDisponiveis.map((t) => [t.id, t.turno] as const)),
+    [turmasDisponiveis],
+  );
 
   const handleAddQuestao = () => {
     setQuestoes((prev) => [
@@ -132,8 +210,16 @@ const NovaProva: React.FC = () => {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!disciplina || !turma || !periodo || !data || !titulo.trim()) {
+    if (!disciplinaId || !turmaId || !periodo || !data || !titulo.trim()) {
       window.alert('Preencha disciplina, turma, bimestre, data e título.');
+      return;
+    }
+
+    const disciplinaNome =
+      disciplinasDisponiveis.find((d) => d.id === disciplinaId)?.nome ?? '';
+    const turmaNome = turmasDisponiveis.find((t) => t.id === turmaId)?.nome ?? '';
+    if (!disciplinaNome || !turmaNome) {
+      window.alert('Selecione disciplina e turma válidas.');
       return;
     }
 
@@ -149,9 +235,11 @@ const NovaProva: React.FC = () => {
     const stored = loadFromStorage<Prova[]>(provasStorageKey, []);
     const prova: Prova = {
       id: createId('prova'),
+      professorId: user?.id ?? '',
+      professorNome: user?.nome ?? '',
       titulo,
-      turma,
-      disciplina,
+      turma: turmaNome,
+      disciplina: disciplinaNome,
       periodo,
       data,
       horario: duracao,
@@ -197,13 +285,20 @@ const NovaProva: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <Label>Disciplina</Label>
-                <Select value={disciplina} onValueChange={setDisciplina}>
+                <Select
+                  value={disciplinaId}
+                  onValueChange={(value) => {
+                    setDisciplinaId(value);
+                    setTurmaId('');
+                    setTurno('');
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione a disciplina" />
                   </SelectTrigger>
                   <SelectContent>
-                    {disciplinasDisponiveis.map((item) => (
-                      <SelectItem key={item.id} value={item.nome}>
+                    {disciplinasFiltradas.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
                         {item.nome}
                       </SelectItem>
                     ))}
@@ -212,15 +307,22 @@ const NovaProva: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <Label>Turma / Série</Label>
-                <Select value={turma} onValueChange={setTurma}>
+                <Select
+                  value={turmaId}
+                  onValueChange={(value) => {
+                    setTurmaId(value);
+                    setTurno(turnoPorTurma[value] ?? '');
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione a turma" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="9º Ano A">9º Ano A</SelectItem>
-                    <SelectItem value="9º Ano B">9º Ano B</SelectItem>
-                    <SelectItem value="8º Ano A">8º Ano A</SelectItem>
-                    <SelectItem value="7º Ano C">7º Ano C</SelectItem>
+                    {turmasFiltradas.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.nome}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -231,7 +333,7 @@ const NovaProva: React.FC = () => {
                     <SelectValue placeholder="Selecione o turno" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Manhã">Manhã</SelectItem>
+                    <SelectItem value="Manha">Manhã</SelectItem>
                     <SelectItem value="Tarde">Tarde</SelectItem>
                     <SelectItem value="Noite">Noite</SelectItem>
                   </SelectContent>
