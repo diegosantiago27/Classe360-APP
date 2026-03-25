@@ -13,5 +13,7 @@ public class NotaDTO {
     private Long turmaId;
     private Long disciplinaId;
     private Long periodoId;
+    private Double valorTrabalhos;
+    private Double valorProvas;
     private Double valor;
 }

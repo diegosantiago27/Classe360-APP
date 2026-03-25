@@ -3,8 +3,26 @@ import { Award, TrendingUp } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  isProvasRelacionalEnabled,
+  listMinhasRespostasComContexto,
+  type MinhaRespostaComProva,
+} from '@/lib/provasRelApi';
+import {
+  isNotasRelacionalEnabled,
+  listNotasRelacionalPorAluno,
+  type NotaLancamentoRelApi,
+} from '@/lib/notasRelApi';
 
 type SituacaoNota = 'Aprovado' | 'Recuperacao' | 'Reprovado' | 'Pendente';
 
@@ -32,6 +50,20 @@ interface NotaLegado {
 
 const notasAlunosStorageKey = 'school-compass:notas-alunos';
 const minhasNotasLegadoKey = 'school-compass:minhas-notas';
+const provasRespostasStorageKey = 'school-compass:provas-respostas';
+const provasStorageKey = 'school-compass:provas';
+
+interface ProvaRespostaLocal {
+  provaId: string;
+  alunoId: string;
+  alunoNome?: string;
+  turma: string;
+  disciplina: string;
+  periodo?: string;
+  status: string;
+  notaFinal?: number | null;
+  corrigidoEm?: string;
+}
 
 const normalizeText = (value?: string) =>
   (value ?? '')
@@ -47,6 +79,29 @@ const situacaoFromMedia = (n: number | null | undefined): SituacaoNota => {
   return 'Reprovado';
 };
 
+const situacaoBadgeProps = (situacao: SituacaoNota) => {
+  if (situacao === 'Aprovado') {
+    return {
+      variant: 'outline' as const,
+      className: 'border-success/50 bg-success/15 text-success hover:bg-success/25',
+    };
+  }
+  if (situacao === 'Pendente' || situacao === 'Recuperacao') {
+    return { variant: 'outline' as const };
+  }
+  return { variant: 'destructive' as const };
+};
+
+/** Extrai o número do bimestre para cruzar "2", "2º Bimestre", etc. */
+const bimestreNumCanon = (bimestreOuPeriodo: string) => {
+  const t = normalizeText(bimestreOuPeriodo).replace(/º/g, 'o');
+  const m = t.match(/(\d)/);
+  return m ? m[1] : t.replace(/[^0-9]/g, '') || '0';
+};
+
+const chaveGrupoProva = (disciplina: string, turma: string, bimestreOuPeriodo: string) =>
+  `${normalizeText(disciplina)}::${normalizeText(turma)}::${bimestreNumCanon(bimestreOuPeriodo)}`;
+
 const MinhasNotas: React.FC = () => {
   const { user } = useAuth();
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(() =>
@@ -55,21 +110,148 @@ const MinhasNotas: React.FC = () => {
   const [legado, setLegado] = useState<NotaLegado[]>(() =>
     loadFromStorage<NotaLegado[]>(minhasNotasLegadoKey, []),
   );
+  const [storageTick, setStorageTick] = useState(0);
+  const [respostasProvasApi, setRespostasProvasApi] = useState<MinhaRespostaComProva[]>([]);
+  const [notasRelAluno, setNotasRelAluno] = useState<NotaLancamentoRelApi[]>([]);
 
   useEffect(() => {
-    void syncKeysFromBackend([notasAlunosStorageKey, minhasNotasLegadoKey]).finally(() => {
+    void syncKeysFromBackend([
+      notasAlunosStorageKey,
+      minhasNotasLegadoKey,
+      provasRespostasStorageKey,
+      provasStorageKey,
+    ]).finally(() => {
       setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
       setLegado(loadFromStorage<NotaLegado[]>(minhasNotasLegadoKey, []));
+      setStorageTick((t) => t + 1);
     });
   }, []);
 
   const uid = user?.id;
 
+  useEffect(() => {
+    if (!isProvasRelacionalEnabled() || !uid) {
+      setRespostasProvasApi([]);
+      return;
+    }
+    void listMinhasRespostasComContexto(uid)
+      .then(setRespostasProvasApi)
+      .catch(() => setRespostasProvasApi([]));
+  }, [uid]);
+
+  useEffect(() => {
+    if (!isNotasRelacionalEnabled() || !uid) {
+      setNotasRelAluno([]);
+      return;
+    }
+    void listNotasRelacionalPorAluno(uid)
+      .then(setNotasRelAluno)
+      .catch(() => setNotasRelAluno([]));
+  }, [uid]);
+
+  const periodoPorProvaId = useMemo(() => {
+    const provas = loadFromStorage<Array<{ id: string; periodo?: string }>>(provasStorageKey, []);
+    return new Map(provas.map((p) => [String(p.id), (p.periodo ?? '').trim()]));
+  }, [storageTick]);
+
+  const respostasProvasLocais = useMemo(() => {
+    if (!user) return [] as MinhaRespostaComProva[];
+    const idNorm = uid ? normalizeText(uid) : '';
+    const nomeNorm = user.nome ? normalizeText(user.nome) : '';
+    const respostas = loadFromStorage<ProvaRespostaLocal[]>(provasRespostasStorageKey, []);
+    return respostas
+      .filter((r) => {
+        const idOk = idNorm && normalizeText(r.alunoId) === idNorm;
+        const nomeOk =
+          nomeNorm && r.alunoNome && normalizeText(r.alunoNome) === nomeNorm;
+        return Boolean(idOk || nomeOk);
+      })
+      .map((r) => {
+        const corrigido =
+          r.status === 'Corrigido' ||
+          (typeof r.corrigidoEm === 'string' && r.corrigidoEm.length > 0);
+        const periodo = (r.periodo?.trim() || periodoPorProvaId.get(String(r.provaId)) || '').trim();
+        return {
+          provaId: r.provaId,
+          turma: r.turma,
+          disciplina: r.disciplina,
+          periodo,
+          notaFinal: r.notaFinal ?? null,
+          corrigido,
+        };
+      });
+  }, [user, uid, storageTick, periodoPorProvaId]);
+
+  const todasRespostasProvaAluno = useMemo(() => {
+    const map = new Map<string, MinhaRespostaComProva>();
+    const enriquecer = (r: MinhaRespostaComProva): MinhaRespostaComProva => ({
+      ...r,
+      periodo: (r.periodo?.trim() || periodoPorProvaId.get(String(r.provaId)) || '').trim(),
+    });
+    respostasProvasLocais.forEach((r) => map.set(r.provaId, enriquecer(r)));
+    respostasProvasApi.forEach((r) => map.set(r.provaId, enriquecer(r)));
+    return Array.from(map.values());
+  }, [respostasProvasLocais, respostasProvasApi, periodoPorProvaId]);
+
+  const gruposNotaProva = useMemo(() => {
+    const acc = new Map<
+      string,
+      { disciplina: string; turma: string; bimestre: string; soma: number; n: number }
+    >();
+    todasRespostasProvaAluno.forEach((r) => {
+      if (!r.corrigido || typeof r.notaFinal !== 'number') return;
+      const bi = r.periodo?.trim();
+      if (!bi) return;
+      const key = chaveGrupoProva(r.disciplina, r.turma, bi);
+      const cur = acc.get(key) ?? {
+        disciplina: r.disciplina,
+        turma: r.turma,
+        bimestre: bi,
+        soma: 0,
+        n: 0,
+      };
+      cur.soma += r.notaFinal;
+      cur.n += 1;
+      acc.set(key, cur);
+    });
+    const medias = new Map<string, { disciplina: string; turma: string; bimestre: string; mediaProvas: number }>();
+    acc.forEach((v, k) => {
+      medias.set(k, {
+        disciplina: v.disciplina,
+        turma: v.turma,
+        bimestre: v.bimestre,
+        mediaProvas: Math.round((v.soma / v.n) * 10) / 10,
+      });
+    });
+    return medias;
+  }, [todasRespostasProvaAluno]);
+
   const notasDoLancamento = useMemo(() => {
-    if (!uid) return [];
-    const idNorm = normalizeText(uid);
-    return notasAlunos.filter((n) => normalizeText(n.alunoId) === idNorm);
-  }, [notasAlunos, uid]);
+    if (!user) return [];
+    const idNorm = uid ? normalizeText(uid) : '';
+    const nomeNorm = user.nome ? normalizeText(user.nome) : '';
+    const local = notasAlunos.filter((n) => {
+      const mesmoId = idNorm && normalizeText(n.alunoId) === idNorm;
+      const mesmoNome = nomeNorm && normalizeText(n.alunoNome) === nomeNorm;
+      return Boolean(mesmoId || mesmoNome);
+    });
+    const rel = notasRelAluno.map((n, idx) => ({
+      id: `rel-${n.id ?? idx}`,
+      alunoId: String(n.alunoId ?? uid ?? ''),
+      alunoNome: n.alunoNome ?? user.nome,
+      turma: n.turmaNome ?? '',
+      disciplina: n.disciplinaNome ?? '',
+      bimestre: n.bimestre ?? '',
+      trabalhosNota: n.trabalhosNota ?? null,
+      provasNota: n.provasNota ?? null,
+      nota: n.nota ?? null,
+    }));
+    const byKey = new Map<string, NotaAluno>();
+    const keyOf = (n: NotaAluno) => chaveGrupoProva(n.disciplina, n.turma, n.bimestre);
+    local.forEach((n) => byKey.set(keyOf(n), n));
+    rel.forEach((n) => byKey.set(keyOf(n), n));
+    return Array.from(byKey.values());
+  }, [notasAlunos, notasRelAluno, uid, user]);
 
   const notasLegadoFiltradas = useMemo(() => {
     if (!uid) return [];
@@ -78,13 +260,26 @@ const MinhasNotas: React.FC = () => {
   }, [legado, uid]);
 
   const itensExibicao = useMemo(() => {
+    const chavesComLancamento = new Set(
+      notasDoLancamento.map((n) => chaveGrupoProva(n.disciplina, n.turma, n.bimestre)),
+    );
+
     const doLancamento = notasDoLancamento.map((n) => {
+      const g = gruposNotaProva.get(chaveGrupoProva(n.disciplina, n.turma, n.bimestre));
+      let provasNota =
+        typeof n.provasNota === 'number' ? n.provasNota : g?.mediaProvas ?? null;
+      const trabalhosNota = typeof n.trabalhosNota === 'number' ? n.trabalhosNota : null;
+      if (provasNota == null && typeof n.nota === 'number' && typeof trabalhosNota === 'number') {
+        const infer = Math.round((2 * n.nota - trabalhosNota) * 10) / 10;
+        if (infer >= 0 && infer <= 10 && !Number.isNaN(infer)) provasNota = infer;
+      }
+
       const media =
         typeof n.nota === 'number'
           ? n.nota
           : (() => {
-              const t = n.trabalhosNota;
-              const p = n.provasNota;
+              const t = trabalhosNota;
+              const p = provasNota;
               if (typeof t === 'number' && typeof p === 'number') return Math.round(((t + p) / 2) * 10) / 10;
               if (typeof t === 'number') return t;
               if (typeof p === 'number') return p;
@@ -92,8 +287,8 @@ const MinhasNotas: React.FC = () => {
             })();
 
       const partes: string[] = [];
-      if (typeof n.trabalhosNota === 'number') partes.push(`Trabalhos: ${n.trabalhosNota.toFixed(1)}`);
-      if (typeof n.provasNota === 'number') partes.push(`Provas: ${n.provasNota.toFixed(1)}`);
+      if (typeof trabalhosNota === 'number') partes.push(`Trabalhos: ${trabalhosNota.toFixed(1)}`);
+      if (typeof provasNota === 'number') partes.push(`Provas: ${provasNota.toFixed(1)}`);
       const detalhe = partes.length ? partes.join(' • ') : 'Nota do lançamento';
 
       return {
@@ -102,10 +297,29 @@ const MinhasNotas: React.FC = () => {
         turma: n.turma,
         bimestre: n.bimestre,
         media,
+        trabalhosNota,
+        provasNota,
         situacao: situacaoFromMedia(media),
         ultimaNota: detalhe,
         origem: 'lancamento' as const,
       };
+    });
+
+    const extrasProvas: typeof doLancamento = [];
+    gruposNotaProva.forEach((g, key) => {
+      if (chavesComLancamento.has(key)) return;
+      extrasProvas.push({
+        id: `prova-${key.replace(/[^a-z0-9]+/gi, '-')}`,
+        disciplina: g.disciplina,
+        turma: g.turma,
+        bimestre: g.bimestre,
+        trabalhosNota: null,
+        provasNota: g.mediaProvas,
+        media: g.mediaProvas,
+        situacao: situacaoFromMedia(g.mediaProvas),
+        ultimaNota: 'Média das provas corrigidas',
+        origem: 'lancamento' as const,
+      });
     });
 
     const doLegado = notasLegadoFiltradas.map((n) => ({
@@ -114,19 +328,21 @@ const MinhasNotas: React.FC = () => {
       turma: undefined as string | undefined,
       bimestre: undefined as string | undefined,
       media: n.media,
+      trabalhosNota: null as number | null,
+      provasNota: null as number | null,
       situacao: n.situacao === 'Pendente' ? situacaoFromMedia(n.media) : n.situacao,
       ultimaNota: n.ultimaNota,
       origem: 'legado' as const,
     }));
 
-    return [...doLancamento, ...doLegado];
-  }, [notasDoLancamento, notasLegadoFiltradas]);
+    return [...doLancamento, ...extrasProvas, ...doLegado];
+  }, [notasDoLancamento, notasLegadoFiltradas, gruposNotaProva]);
 
   const mediaGeral = useMemo(() => {
     const comValor = itensExibicao.filter((i) => typeof i.media === 'number') as Array<
       (typeof itensExibicao)[0] & { media: number }
     >;
-    if (comValor.length === 0) return 0;
+    if (comValor.length === 0) return null;
     const soma = comValor.reduce((acc, item) => acc + item.media, 0);
     return Math.round((soma / comValor.length) * 10) / 10;
   }, [itensExibicao]);
@@ -148,6 +364,19 @@ const MinhasNotas: React.FC = () => {
     return diff > 0 ? `+${diff}` : `${diff}`;
   }, [itensExibicao]);
 
+  const fmtCelula = (v: number | null | undefined) =>
+    typeof v === 'number' && !Number.isNaN(v) ? v.toFixed(1) : '—';
+
+  const itensOrdenados = useMemo(
+    () =>
+      [...itensExibicao].sort((a, b) => {
+        const d = a.disciplina.localeCompare(b.disciplina, 'pt-BR', { sensitivity: 'base' });
+        if (d !== 0) return d;
+        return (a.bimestre ?? '').localeCompare(b.bimestre ?? '', 'pt-BR', { sensitivity: 'base' });
+      }),
+    [itensExibicao],
+  );
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -165,7 +394,9 @@ const MinhasNotas: React.FC = () => {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-sm font-medium text-muted-foreground">Média geral</CardTitle>
-                <div className="text-2xl font-semibold text-foreground">{mediaGeral}</div>
+                <div className="text-2xl font-semibold text-foreground">
+                  {mediaGeral === null ? '—' : mediaGeral}
+                </div>
               </div>
               <Award className="w-5 h-5 text-success" />
             </CardHeader>
@@ -189,52 +420,67 @@ const MinhasNotas: React.FC = () => {
             aparecerão aqui.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {itensExibicao.map((item) => (
-              <Card key={item.id} className="card-hover">
-                <CardHeader>
-                  <CardTitle className="text-lg">{item.disciplina}</CardTitle>
-                  <CardDescription>
-                    {[item.turma, item.bimestre].filter(Boolean).join(' • ') || item.ultimaNota}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {item.turma || item.bimestre ? (
-                    <div className="text-sm text-muted-foreground">{item.ultimaNota}</div>
-                  ) : null}
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Média</span>
-                    <span className="text-lg font-semibold text-foreground">
-                      {typeof item.media === 'number' ? item.media.toFixed(1) : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Badge
-                      variant={
-                        item.situacao === 'Aprovado'
-                          ? 'secondary'
-                          : item.situacao === 'Pendente'
-                            ? 'outline'
-                            : 'destructive'
-                      }
-                    >
-                      {item.situacao === 'Pendente' ? 'Aguardando nota' : item.situacao}
-                    </Badge>
-                    <div className="flex-1 pl-4">
-                      <div className="h-2 rounded-full bg-muted">
-                        {typeof item.media === 'number' ? (
-                          <div
-                            className="h-full rounded-full bg-success"
-                            style={{ width: `${Math.min(100, item.media * 10)}%` }}
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Quadro de notas</CardTitle>
+              <CardDescription>
+                Uma linha por disciplina e bimestre. Inclui lançamentos em <strong>Notas</strong> e média das{' '}
+                <strong>provas corrigidas</strong> (com período/bimestre cadastrado na prova).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-0 sm:px-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Disciplina</TableHead>
+                    <TableHead className="hidden sm:table-cell">Turma</TableHead>
+                    <TableHead className="hidden md:table-cell">Bimestre</TableHead>
+                    <TableHead className="text-right">Trabalhos</TableHead>
+                    <TableHead className="text-right">Provas</TableHead>
+                    <TableHead className="text-right">Média</TableHead>
+                    <TableHead className="hidden lg:table-cell">Situação</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {itensOrdenados.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium">
+                        <div>{item.disciplina}</div>
+                        <div className="text-xs text-muted-foreground sm:hidden">
+                          {[item.turma, item.bimestre].filter(Boolean).join(' • ') || '—'}
+                        </div>
+                        <div className="mt-2 lg:hidden">
+                          <Badge {...situacaoBadgeProps(item.situacao)}>
+                            {item.situacao === 'Pendente' ? 'Aguardando' : item.situacao}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell text-muted-foreground">
+                        {item.turma ?? '—'}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-muted-foreground">
+                        {item.bimestre ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {fmtCelula(item.trabalhosNota)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {fmtCelula(item.provasNota)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">
+                        {typeof item.media === 'number' ? item.media.toFixed(1) : '—'}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        <Badge {...situacaoBadgeProps(item.situacao)}>
+                          {item.situacao === 'Pendente' ? 'Aguardando' : item.situacao}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         )}
       </div>
     </DashboardLayout>

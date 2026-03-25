@@ -8,13 +8,11 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class QuestaoDTO {
-
+public class ProvaQuestaoPayloadDTO {
     private Long id;
-    private Long provaId;
     private String enunciado;
     private String tipo;
-    private List<String> alternativas;
-    private String respostaCorreta;
     private Double pontos;
+    private List<String> opcoes;
+    private Integer corretaIndex;
 }

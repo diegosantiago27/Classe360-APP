@@ -10,6 +10,13 @@ import { useToast } from '@/hooks/use-toast';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
+import {
+  getMinhaRespostaRelacional,
+  getProvaRelacional,
+  isProvasRelacionalEnabled,
+  mapRelApiToStorageShape,
+  submitRespostaRelacional,
+} from '@/lib/provasRelApi';
 
 type QuestionType = 'multipla' | 'aberta';
 
@@ -101,11 +108,11 @@ export default function ProvaRealizar() {
   const [timeExpired, setTimeExpired] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  const prova = useMemo(() => {
+  const [prova, setProva] = useState<Prova | null>(() => {
     if (!id) return null;
     const provas = loadFromStorage<Prova[]>(provasStorageKey, []);
     return provas.find((item) => item.id === id) ?? null;
-  }, [id]);
+  });
 
   const [respostaExistente, setRespostaExistente] = useState<ProvaResposta | null>(() => {
     if (!user?.id || !id) return null;
@@ -114,6 +121,26 @@ export default function ProvaRealizar() {
   });
 
   const [provaIniciada, setProvaIniciada] = useState(false);
+
+  useEffect(() => {
+    if (!id) {
+      setProva(null);
+      return;
+    }
+    if (isProvasRelacionalEnabled()) {
+      void getProvaRelacional(id).then((p) => {
+        if (p) {
+          setProva({ ...mapRelApiToStorageShape(p), sala: '' } as Prova);
+          return;
+        }
+        const provasLocal = loadFromStorage<Prova[]>(provasStorageKey, []);
+        setProva(provasLocal.find((item) => item.id === id) ?? null);
+      });
+      return;
+    }
+    const provas = loadFromStorage<Prova[]>(provasStorageKey, []);
+    setProva(provas.find((item) => item.id === id) ?? null);
+  }, [id]);
 
   useLayoutEffect(() => {
     if (!user?.id || !id || !prova) return;
@@ -146,11 +173,41 @@ export default function ProvaRealizar() {
       setRespostaExistente(null);
       return;
     }
+    if (isProvasRelacionalEnabled()) {
+      void getMinhaRespostaRelacional(id, user.id).then((resp) => {
+        if (!resp) {
+          const respostas = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
+          setRespostaExistente(
+            respostas.find((item) => item.provaId === id && item.alunoId === user.id) ?? null,
+          );
+          return;
+        }
+        setRespostaExistente({
+          id: String(resp.id ?? `${id}-${user.id}`),
+          provaId: String(resp.provaId),
+          provaTitulo: resp.provaTitulo ?? prova?.titulo ?? '',
+          alunoId: String(resp.alunoId),
+          alunoNome: resp.alunoNome ?? user.nome,
+          turma: resp.turma ?? prova?.turma ?? '',
+          disciplina: resp.disciplina ?? prova?.disciplina ?? '',
+          status: (resp.status as 'Enviado' | 'Corrigido') ?? 'Enviado',
+          respostas: (resp.respostas ?? []).map((r) => ({
+            questaoId: String(r.questaoId ?? ''),
+            tipo: r.tipo === 'aberta' ? 'aberta' : 'multipla',
+            alternativaIndex: r.alternativaIndex ?? null,
+            respostaTexto: r.respostaTexto ?? '',
+          })),
+          enviadoEm: resp.enviadoEm ?? new Date().toISOString(),
+          finalizadaPorTempo: resp.finalizadaPorTempo,
+        });
+      });
+      return;
+    }
     const respostas = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
     setRespostaExistente(
       respostas.find((item) => item.provaId === id && item.alunoId === user.id) ?? null,
     );
-  }, [id, user?.id]);
+  }, [id, user?.id, prova?.disciplina, prova?.titulo, prova?.turma, user?.nome]);
 
   const modoConsulta = Boolean(respostaExistente);
 
@@ -169,7 +226,7 @@ export default function ProvaRealizar() {
     setRespostasAbertas(mapAbertas);
   }, [respostaExistente]);
 
-  const submitProva = useCallback((force = false) => {
+  const submitProva = useCallback(async (force = false) => {
     if (!prova || !user) return;
 
     const questoes = prova.questoes ?? [];
@@ -202,29 +259,66 @@ export default function ProvaRealizar() {
       };
     });
 
-    const novoRegistro: ProvaResposta = {
-      id: `${prova.id}-${user.id}`,
-      provaId: prova.id,
-      provaTitulo: prova.titulo,
-      alunoId: user.id,
-      alunoNome: user.nome,
-      turma: prova.turma,
-      disciplina: prova.disciplina,
-      status: 'Enviado',
-      respostas: respostasFinal,
-      enviadoEm: new Date().toISOString(),
-      finalizadaPorTempo: force ? true : undefined,
-    };
+    let salvoNoRelacional = false;
+    if (isProvasRelacionalEnabled()) {
+      try {
+        const resp = await submitRespostaRelacional(
+          prova.id,
+          user.id,
+          respostasFinal.map((r) => ({
+            questaoId: Number(r.questaoId),
+            tipo: r.tipo,
+            alternativaIndex: r.alternativaIndex ?? null,
+            respostaTexto: r.respostaTexto ?? '',
+          })),
+          force,
+        );
+        const novoRegistro: ProvaResposta = {
+          id: String(resp.id ?? `${prova.id}-${user.id}`),
+          provaId: String(resp.provaId),
+          provaTitulo: resp.provaTitulo ?? prova.titulo,
+          alunoId: String(resp.alunoId),
+          alunoNome: resp.alunoNome ?? user.nome,
+          turma: resp.turma ?? prova.turma,
+          disciplina: resp.disciplina ?? prova.disciplina,
+          status: (resp.status as 'Enviado' | 'Corrigido') ?? 'Enviado',
+          respostas: respostasFinal,
+          enviadoEm: resp.enviadoEm ?? new Date().toISOString(),
+          finalizadaPorTempo: resp.finalizadaPorTempo,
+        };
+        sessionStorage.removeItem(sessaoAlunoProvaKey(user.id, prova.id));
+        setProvaIniciada(false);
+        setRespostaExistente(novoRegistro);
+        salvoNoRelacional = true;
+      } catch {
+        // fallback local
+      }
+    }
+    if (!salvoNoRelacional) {
+      const novoRegistro: ProvaResposta = {
+        id: `${prova.id}-${user.id}`,
+        provaId: prova.id,
+        provaTitulo: prova.titulo,
+        alunoId: user.id,
+        alunoNome: user.nome,
+        turma: prova.turma,
+        disciplina: prova.disciplina,
+        status: 'Enviado',
+        respostas: respostasFinal,
+        enviadoEm: new Date().toISOString(),
+        finalizadaPorTempo: force ? true : undefined,
+      };
 
-    const stored = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
-    const updated = [
-      novoRegistro,
-      ...stored.filter((item) => !(item.provaId === prova.id && item.alunoId === user.id)),
-    ];
-    saveToStorage(respostasStorageKey, updated);
-    sessionStorage.removeItem(sessaoAlunoProvaKey(user.id, prova.id));
-    setProvaIniciada(false);
-    setRespostaExistente(novoRegistro);
+      const stored = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
+      const updated = [
+        novoRegistro,
+        ...stored.filter((item) => !(item.provaId === prova.id && item.alunoId === user.id)),
+      ];
+      saveToStorage(respostasStorageKey, updated);
+      sessionStorage.removeItem(sessaoAlunoProvaKey(user.id, prova.id));
+      setProvaIniciada(false);
+      setRespostaExistente(novoRegistro);
+    }
     toast(
       force
         ? {
@@ -240,7 +334,7 @@ export default function ProvaRealizar() {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    submitProva(false);
+    void submitProva(false);
   };
 
   useEffect(() => {
@@ -289,7 +383,7 @@ export default function ProvaRealizar() {
           window.clearInterval(timerRef.current);
           timerRef.current = null;
         }
-        submitProva(true);
+        void submitProva(true);
       }
     };
 

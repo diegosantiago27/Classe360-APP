@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ClipboardList, PenLine, Pencil, Search, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -11,7 +11,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { recalcularPendenciasLancamentos } from '@/lib/notasPendenciasLancamento';
+import {
+  isProvasRelacionalEnabled,
+  listProvasRelacionalParaProfessor,
+  listRespostasRelacionalParaProfessor,
+} from '@/lib/provasRelApi';
+import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 
@@ -40,6 +47,44 @@ interface DisciplinaVinculo {
 
 const storageKey = 'school-compass:notas';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
+const notasAlunosStorageKey = 'school-compass:notas-alunos';
+const provasRespostasStorageKey = 'school-compass:provas-respostas';
+const provasStorageKey = 'school-compass:provas';
+const atividadesEntregasStorageKey = 'school-compass:atividades-entregas';
+
+interface NotaAlunoStorage {
+  alunoId: string;
+  turma: string;
+  disciplina: string;
+  bimestre: string;
+  trabalhosNota?: number | null;
+  provasNota?: number | null;
+  nota: number | null;
+}
+
+interface ProvaRespostaStorage {
+  provaId: string;
+  alunoId: string;
+  turma?: string;
+  disciplina?: string;
+  status: string;
+  notaFinal?: number | null;
+  periodo?: string;
+  corrigidoEm?: string;
+}
+
+interface AtividadeEntregaStorage {
+  alunoId: string;
+  disciplina: string;
+  nota?: number | null;
+}
+
+interface ProvaCatalogStorage {
+  id: string;
+  turma?: string;
+  disciplina?: string;
+  periodo?: string;
+}
 
 const normalizeText = (value?: string) =>
   (value ?? '')
@@ -48,8 +93,19 @@ const normalizeText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
 
+/** Filtros da lista de lançamentos — restaurados ao voltar de Notas da turma. */
+export type NotasListFiltersState = {
+  turmaSelecionada: string;
+  disciplinaSelecionada: string;
+  bimestreSelecionado: string;
+  busca: string;
+  statusSelecionado: 'todos' | 'pendentes' | 'completos';
+};
+
 const Notas: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const ehProfessor =
     user?.perfil === UserProfile.PROFESSOR ||
     String((user as { role?: unknown } | null)?.role ?? '').toUpperCase() === 'ROLE_PROFESSOR';
@@ -125,26 +181,127 @@ const Notas: React.FC = () => {
       ),
     );
 
+    const bimestresVinculo = ['1º Bimestre', '2º Bimestre', '3º Bimestre', '4º Bimestre'];
     vinculos.forEach((vinculo) => {
       const turmaNome = resolveTurmaNome(vinculo.turmaId, vinculo.turmaNome);
       const disciplinaNome = resolveDisciplinaNome(vinculo.disciplinaId);
-      const bimestrePadrao = '1º Bimestre';
-      const key = `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}::${normalizeText(bimestrePadrao)}`;
-      if (existentesKeys.has(key)) return;
       const pendentes = Math.max(0, Number(vinculo.alunos?.length ?? 0));
-      existentes.push({
-        id: createId('nota-auto'),
-        turma: turmaNome,
-        disciplina: disciplinaNome,
-        bimestre: bimestrePadrao,
-        pendentes,
-        status: pendentes > 0 ? 'Pendente' : 'Concluida',
+      bimestresVinculo.forEach((bimestrePadrao) => {
+        const key = `${normalizeText(turmaNome)}::${normalizeText(disciplinaNome)}::${normalizeText(bimestrePadrao)}`;
+        if (existentesKeys.has(key)) return;
+        const idEstavel = `auto-${key.replace(/[^a-z0-9]+/g, '-')}`;
+        existentes.push({
+          id: idEstavel,
+          turma: turmaNome,
+          disciplina: disciplinaNome,
+          bimestre: bimestrePadrao,
+          pendentes,
+          status: pendentes > 0 ? 'Pendente' : 'Concluida',
+        });
+        existentesKeys.add(key);
       });
-      existentesKeys.add(key);
     });
 
     return existentes;
   }, [lancamentos, vinculos, turmasDisponiveis, disciplinasDisponiveis, disciplinaNomePorId]);
+
+  const [storageTick, setStorageTick] = useState(0);
+  const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaRespostaStorage[]>([]);
+
+  useEffect(() => {
+    void syncKeysFromBackend([
+      notasAlunosStorageKey,
+      provasRespostasStorageKey,
+      provasStorageKey,
+      atividadesEntregasStorageKey,
+      usersStorageKey,
+      vinculosStorageKey,
+      turmasStorageKey,
+    ]).finally(() => setStorageTick((t) => t + 1));
+  }, []);
+
+  useEffect(() => {
+    const lf = (location.state as { listFilters?: NotasListFiltersState } | null)?.listFilters;
+    if (!lf) return;
+    setTurmaSelecionada(lf.turmaSelecionada);
+    setDisciplinaSelecionada(lf.disciplinaSelecionada);
+    setBimestreSelecionado(lf.bimestreSelecionado);
+    setBusca(lf.busca);
+    setStatusSelecionado(lf.statusSelecionado);
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (!isProvasRelacionalEnabled() || !user?.id) {
+      setRespostasProvasRel([]);
+      return;
+    }
+    void Promise.all([
+      listRespostasRelacionalParaProfessor(user.id),
+      listProvasRelacionalParaProfessor(user.id),
+    ])
+      .then(([respostas, provas]) => {
+        const periodoPorProva = new Map<string, string>();
+        provas.forEach((p) => {
+          if (p.id != null) periodoPorProva.set(String(p.id), p.periodo ?? '');
+        });
+        const mapped: ProvaRespostaStorage[] = respostas.map((r) => {
+          const corrigido =
+            r.status === 'Corrigido' ||
+            (typeof r.corrigidoEm === 'string' && r.corrigidoEm.length > 0) ||
+            (Array.isArray(r.corrigidoEm) && r.corrigidoEm.length > 0);
+          return {
+            provaId: String(r.provaId),
+            alunoId: String(r.alunoId),
+            turma: r.turma ?? '',
+            disciplina: r.disciplina ?? '',
+            status: corrigido ? 'Corrigido' : ((r.status as string) ?? 'Enviado'),
+            notaFinal: r.notaFinal ?? null,
+            periodo: periodoPorProva.get(String(r.provaId)) ?? '',
+            corrigidoEm:
+              typeof r.corrigidoEm === 'string'
+                ? r.corrigidoEm
+                : Array.isArray(r.corrigidoEm)
+                  ? new Date(
+                      (r.corrigidoEm as number[])[0],
+                      ((r.corrigidoEm as number[])[1] ?? 1) - 1,
+                      (r.corrigidoEm as number[])[2] ?? 1,
+                    ).toISOString()
+                  : undefined,
+          };
+        });
+        setRespostasProvasRel(mapped);
+      })
+      .catch(() => setRespostasProvasRel([]));
+  }, [user?.id]);
+
+  const respostasProvasMescladas = useMemo(() => {
+    const local = loadFromStorage<ProvaRespostaStorage[]>(provasRespostasStorageKey, []);
+    const byKey = new Map<string, ProvaRespostaStorage>();
+    const keyOf = (r: { provaId: string; alunoId: string }) => `${r.provaId}-${r.alunoId}`;
+    local.forEach((r) => byKey.set(keyOf(r), r));
+    respostasProvasRel.forEach((r) => byKey.set(keyOf(r), r));
+    return Array.from(byKey.values());
+  }, [storageTick, respostasProvasRel]);
+
+  const lancamentosComMetricas = useMemo(() => {
+    const notasAlunos = loadFromStorage<NotaAlunoStorage[]>(notasAlunosStorageKey, []);
+    const provasCatalogo = loadFromStorage<ProvaCatalogStorage[]>(provasStorageKey, []);
+    const entregasAtividades = loadFromStorage<AtividadeEntregaStorage[]>(atividadesEntregasStorageKey, []);
+    const usuarios = loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers);
+
+    return recalcularPendenciasLancamentos(lancamentosCompletos, {
+      vinculos,
+      usuarios,
+      notasAlunos,
+      respostasProvas: respostasProvasMescladas,
+      entregasAtividades,
+      provasCatalogo,
+      resolveTurmaNome,
+      resolveDisciplinaNome,
+    });
+  }, [lancamentosCompletos, vinculos, storageTick, respostasProvasMescladas]);
+
   const paresVinculadosProfessor = useMemo(() => {
     return new Set(
       professorVinculos.map((v) => {
@@ -165,19 +322,19 @@ const Notas: React.FC = () => {
   }, [vinculos, disciplinaNomePorId, turmasDisponiveis, disciplinasDisponiveis]);
   const lancamentosVisiveis = useMemo(() => {
     if (ehProfessor) {
-      return lancamentosCompletos.filter((item) =>
+      return lancamentosComMetricas.filter((item) =>
         paresVinculadosProfessor.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
       );
     }
     // Para perfis administrativos/consulta, quando há vínculos cadastrados
     // mostramos apenas lançamentos coerentes com os vínculos reais.
     if (paresVinculadosGerais.size > 0) {
-      return lancamentosCompletos.filter((item) =>
+      return lancamentosComMetricas.filter((item) =>
         paresVinculadosGerais.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
       );
     }
-    return lancamentosCompletos;
-  }, [ehProfessor, lancamentosCompletos, paresVinculadosProfessor, paresVinculadosGerais]);
+    return lancamentosComMetricas;
+  }, [ehProfessor, lancamentosComMetricas, paresVinculadosProfessor, paresVinculadosGerais]);
   const disciplinaOptions = useMemo(
     () => {
       if (!ehProfessor) return disciplinasDisponiveis.map((item) => item.nome);
@@ -238,6 +395,17 @@ const Notas: React.FC = () => {
       return texto.includes(normalizeText(busca));
     });
   }, [lancamentosFiltrados, statusSelecionado, busca]);
+
+  const listFiltersAtuais = useMemo(
+    (): NotasListFiltersState => ({
+      turmaSelecionada,
+      disciplinaSelecionada,
+      bimestreSelecionado,
+      busca,
+      statusSelecionado,
+    }),
+    [turmaSelecionada, disciplinaSelecionada, bimestreSelecionado, busca, statusSelecionado],
+  );
 
   const pendentes = totalPendentes;
   const concluidas = totalCompletos;
@@ -480,7 +648,10 @@ const Notas: React.FC = () => {
                       <div className="min-w-0 flex-1">
                         <Link
                           to={`/notas/${item.id}`}
-                          state={{ lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre } }}
+                          state={{
+                            lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre },
+                            listFilters: listFiltersAtuais,
+                          }}
                           className="truncate text-sm font-medium text-primary hover:underline"
                         >
                           {item.turma}
@@ -511,7 +682,10 @@ const Notas: React.FC = () => {
                       {somenteConsulta && (
                         <Link
                           to={`/notas/${item.id}`}
-                          state={{ lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre } }}
+                          state={{
+                            lancamento: { id: item.id, turma: item.turma, disciplina: item.disciplina, bimestre: item.bimestre },
+                            listFilters: listFiltersAtuais,
+                          }}
                         >
                           <Button variant="outline" size="sm">Ver</Button>
                         </Link>

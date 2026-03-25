@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000024-1" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="prova"/>
+            <not>
+                <columnExists tableName="prova" columnName="periodo"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="prova">
+            <column name="periodo" type="varchar(255)"/>
+            <column name="horario" type="varchar(255)"/>
+            <column name="instrucoes" type="varchar(4000)"/>
+            <column name="status" type="varchar(255)"/>
+            <column name="publicada" type="boolean" valueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="turno" type="varchar(255)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000024-2" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="questao"/>
+            <not>
+                <columnExists tableName="questao" columnName="pontos"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="questao">
+            <column name="pontos" type="double precision" valueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000024-3" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="prova_resposta"/>
+            </not>
+        </preConditions>
+        <createTable tableName="prova_resposta">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="prova_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_prova_resposta_prova" references="prova(id)"/>
+            </column>
+            <column name="aluno_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_prova_resposta_aluno" references="usuario(id)"/>
+            </column>
+            <column name="status" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pontos_maximos" type="double precision">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pontos_obtidos" type="double precision">
+                <constraints nullable="false"/>
+            </column>
+            <column name="nota_final" type="double precision"/>
+            <column name="enviado_em" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="corrigido_em" type="timestamp"/>
+            <column name="finalizada_por_tempo" type="boolean" valueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="respostas_json" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="prova_resposta" columnNames="prova_id, aluno_id" constraintName="ux_prova_resposta_prova_aluno"/>
+    </changeSet>
+</databaseChangeLog>

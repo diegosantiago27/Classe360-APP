@@ -18,4 +18,10 @@ public class ProvaDTO {
     private Long professorId;
     private LocalDate data;
     private Boolean ativa;
+    private String periodo;
+    private String horario;
+    private String instrucoes;
+    private String status;
+    private Boolean publicada;
+    private String turno;
 }

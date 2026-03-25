@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000025-1" author="classe360">
+        <addColumn tableName="nota">
+            <column name="valor_trabalhos" type="double precision"/>
+            <column name="valor_provas" type="double precision"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000025-2" author="classe360">
+        <dropNotNullConstraint tableName="nota" columnName="valor" columnDataType="float"/>
+    </changeSet>
+
+    <changeSet id="00000000000025-3" author="classe360">
+        <addUniqueConstraint
+            tableName="nota"
+            columnNames="aluno_id, turma_id, disciplina_id, periodo_id"
+            constraintName="ux_nota_aluno_turma_disciplina_periodo"/>
+    </changeSet>
+</databaseChangeLog>

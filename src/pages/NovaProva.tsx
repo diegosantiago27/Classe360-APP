@@ -21,6 +21,7 @@ import {
 } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
+import { createProvaRelacional, isProvasRelacionalEnabled } from '@/lib/provasRelApi';
 
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 
@@ -208,7 +209,7 @@ const NovaProva: React.FC = () => {
     );
   };
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!disciplinaId || !turmaId || !periodo || !data || !titulo.trim()) {
       window.alert('Preencha disciplina, turma, bimestre, data e título.');
@@ -233,7 +234,7 @@ const NovaProva: React.FC = () => {
     }));
 
     const stored = loadFromStorage<Prova[]>(provasStorageKey, []);
-    const prova: Prova = {
+    const provaLocal: Prova = {
       id: createId('prova'),
       professorId: user?.id ?? '',
       professorNome: user?.nome ?? '',
@@ -246,12 +247,48 @@ const NovaProva: React.FC = () => {
       sala: '',
       instrucoes,
       status: 'Agendada',
-      publicada: false,
+      publicada: true,
       questoes: questoesFormatadas,
       turno,
     };
 
-    saveToStorage(provasStorageKey, [prova, ...stored]);
+    if (isProvasRelacionalEnabled()) {
+      try {
+        const created = await createProvaRelacional({
+          professorId: Number(user?.id),
+          professorNome: user?.nome ?? '',
+          turmaNome,
+          disciplinaNome,
+          titulo,
+          descricao: instrucoes,
+          periodo,
+          data,
+          horario: duracao,
+          instrucoes,
+          status: 'Agendada',
+          publicada: true,
+          turno,
+          questoes: questoesFormatadas.map((q) => ({
+            enunciado: q.enunciado,
+            tipo: q.tipo === 'aberta' ? 'aberta' : q.tipo,
+            pontos: q.pontos,
+            opcoes: q.opcoes,
+            corretaIndex: q.corretaIndex,
+          })),
+        });
+        const provaEspelho = {
+          ...provaLocal,
+          id: created.id ? String(created.id) : provaLocal.id,
+        };
+        saveToStorage(provasStorageKey, [provaEspelho, ...stored.filter((p) => p.id !== provaEspelho.id)]);
+        navigate('/provas');
+        return;
+      } catch {
+        // fallback local para não bloquear operação
+      }
+    }
+
+    saveToStorage(provasStorageKey, [provaLocal, ...stored]);
     navigate('/provas');
   };
 

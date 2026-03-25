@@ -9,6 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import {
+  getMinhaRespostaRelacional,
+  isProvasRelacionalEnabled,
+  listProvasRelacionalParaAluno,
+  mapRelApiToStorageShape,
+} from '@/lib/provasRelApi';
 
 interface Prova {
   id: string;
@@ -63,12 +69,49 @@ export default function ProvasAluno() {
     loadFromStorage<ProvaResposta[]>(respostasStorageKey, []),
   );
 
-  useEffect(() => {
-    void syncKeysFromBackend([provasStorageKey, respostasStorageKey]).finally(() => {
+  const loadLocalData = useCallback(() => {
+    return syncKeysFromBackend([provasStorageKey, respostasStorageKey]).finally(() => {
       setProvas(loadFromStorage<Prova[]>(provasStorageKey, []));
       setRespostas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
     });
   }, []);
+
+  useEffect(() => {
+    if (isProvasRelacionalEnabled() && user?.id) {
+      void listProvasRelacionalParaAluno(user.id)
+        .then((rows) => {
+          if (rows.length === 0) {
+            void loadLocalData();
+            return;
+          }
+          setProvas(rows.map((r) => ({ ...mapRelApiToStorageShape(r), sala: '' })));
+        })
+        .catch(() => {
+          void loadLocalData();
+        });
+      return;
+    }
+    void loadLocalData();
+  }, [loadLocalData, user?.id]);
+
+  useEffect(() => {
+    if (!isProvasRelacionalEnabled() || !user?.id || provas.length === 0) return;
+    void (async () => {
+      const fetched = await Promise.all(
+        provas.map(async (prova) => {
+          const r = await getMinhaRespostaRelacional(prova.id, user.id);
+          if (!r) return null;
+          return {
+            id: String(r.id ?? `${prova.id}-${user.id}`),
+            provaId: String(r.provaId),
+            alunoId: String(r.alunoId),
+            status: r.status,
+          } as ProvaResposta;
+        }),
+      );
+      setRespostas(fetched.filter((x): x is ProvaResposta => Boolean(x)));
+    })();
+  }, [provas, user?.id]);
 
   const getRespostaDoAluno = useCallback(
     (provaId: string) =>

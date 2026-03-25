@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Search } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { isProvasRelacionalEnabled, listRespostasRelacionalParaProfessor } from '@/lib/provasRelApi';
 
 const normalizeText = (value?: string) =>
   (value ?? '')
@@ -70,6 +71,15 @@ interface ProvaResposta {
 type StatusFiltro = 'pendente' | 'corrigido' | 'todos';
 type TipoCorrecao = 'atividades' | 'provas';
 
+/** Filtros da lista para restaurar ao voltar do detalhe (Salvar / Voltar). */
+export type CorrecoesListFiltersState = {
+  tipoCorrecao: TipoCorrecao;
+  statusFiltro: StatusFiltro;
+  turmaFiltro: string;
+  materiaFiltro: string;
+  busca: string;
+};
+
 interface CorrecaoItem {
   id: string;
   tipo: TipoCorrecao;
@@ -82,6 +92,8 @@ interface CorrecaoItem {
   status: 'Pendente' | 'Corrigido';
   nota?: number | null;
   enviadoEm?: string;
+  /** Só para tipo provas — navegação para a tela de detalhe. */
+  provaId?: string;
 }
 
 const formatTimeAgo = (iso?: string) => {
@@ -100,12 +112,14 @@ const formatTimeAgo = (iso?: string) => {
 export default function Correcoes() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [syncSeed, setSyncSeed] = useState(0);
   const [busca, setBusca] = useState('');
   const [tipoCorrecao, setTipoCorrecao] = useState<TipoCorrecao>('atividades');
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('todos');
   const [turmaFiltro, setTurmaFiltro] = useState('todas');
   const [materiaFiltro, setMateriaFiltro] = useState('todas');
+  const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaResposta[]>([]);
 
   useEffect(() => {
     const keys = [
@@ -119,6 +133,42 @@ export default function Correcoes() {
     ];
     void syncKeysFromBackend(keys).finally(() => setSyncSeed((prev) => prev + 1));
   }, []);
+
+  useEffect(() => {
+    const lf = (location.state as { listFilters?: CorrecoesListFiltersState } | null)?.listFilters;
+    if (!lf) return;
+    setTipoCorrecao(lf.tipoCorrecao);
+    setStatusFiltro(lf.statusFiltro);
+    setTurmaFiltro(lf.turmaFiltro);
+    setMateriaFiltro(lf.materiaFiltro);
+    setBusca(lf.busca);
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (!isProvasRelacionalEnabled() || !user?.id) return;
+    void listRespostasRelacionalParaProfessor(user.id)
+      .then((rows) => {
+        setRespostasProvasRel(
+          rows.map((r) => ({
+            id: String(r.id ?? `${r.provaId}-${r.alunoId}`),
+            provaId: String(r.provaId),
+            provaTitulo: r.provaTitulo ?? 'Prova',
+            alunoId: String(r.alunoId),
+            alunoNome: r.alunoNome ?? '',
+            turma: r.turma ?? '',
+            disciplina: r.disciplina ?? '',
+            status: (r.status as 'Enviado' | 'Corrigido') ?? 'Enviado',
+            notaFinal: r.notaFinal ?? null,
+            corrigidoEm: r.corrigidoEm,
+            enviadoEm: r.enviadoEm,
+          })),
+        );
+      })
+      .catch(() => {
+        setRespostasProvasRel([]);
+      });
+  }, [user?.id]);
 
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
@@ -148,6 +198,13 @@ export default function Correcoes() {
     () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
     [syncSeed],
   );
+  const respostasProvasCombinadas = useMemo(() => {
+    const byId = new Map<string, ProvaResposta>();
+    [...respostasProvas, ...respostasProvasRel].forEach((item) => {
+      byId.set(item.id || `${item.provaId}-${item.alunoId}`, item);
+    });
+    return Array.from(byId.values());
+  }, [respostasProvas, respostasProvasRel]);
 
   const vinculosProfessor = useMemo(() => {
     if (!user) return [];
@@ -242,7 +299,7 @@ export default function Correcoes() {
   const correcoesBaseProvas = useMemo(() => {
     const usuarioPorId = new Map(usuarios.map((item) => [item.id, item]));
 
-    return respostasProvas
+    return respostasProvasCombinadas
       .map((resposta) => {
         const turmaNome = resposta.turma;
         const materiaNome = resposta.disciplina;
@@ -260,6 +317,7 @@ export default function Correcoes() {
         return {
           id: resposta.id || `${resposta.provaId}-${resposta.alunoId}`,
           tipo: 'provas',
+          provaId: String(resposta.provaId),
           alunoId: resposta.alunoId,
           alunoNome,
           atividadeTitulo: tituloProva,
@@ -267,16 +325,14 @@ export default function Correcoes() {
           materia: materiaNome,
           turno,
           status:
-            resposta.status === 'Corrigido' || typeof resposta.notaFinal === 'number' || Boolean(resposta.corrigidoEm)
-              ? 'Corrigido'
-              : 'Pendente',
+            resposta.status === 'Corrigido' || Boolean(resposta.corrigidoEm) ? 'Corrigido' : 'Pendente',
           nota: resposta.notaFinal,
           enviadoEm: resposta.enviadoEm,
         } as CorrecaoItem;
       })
       .filter((item): item is CorrecaoItem => Boolean(item))
       .sort((a, b) => (b.enviadoEm ?? '').localeCompare(a.enviadoEm ?? ''));
-  }, [respostasProvas, usuarios, vinculoParSet, turmaFiltro, materiaFiltro, turmas]);
+  }, [respostasProvasCombinadas, usuarios, vinculoParSet, turmaFiltro, materiaFiltro, turmas]);
 
   const correcoesBase = useMemo(
     () => (tipoCorrecao === 'provas' ? correcoesBaseProvas : correcoesBaseAtividades),
@@ -303,9 +359,34 @@ export default function Correcoes() {
     });
   }, [correcoesBase, statusFiltro, busca]);
 
+  const listFiltersAtuais = useMemo(
+    (): CorrecoesListFiltersState => ({
+      tipoCorrecao,
+      statusFiltro,
+      turmaFiltro,
+      materiaFiltro,
+      busca,
+    }),
+    [tipoCorrecao, statusFiltro, turmaFiltro, materiaFiltro, busca],
+  );
+
   const handleAbrirCorrecao = (item: CorrecaoItem) => {
     if (item.tipo === 'provas') {
-      window.alert('A correção de provas está disponível no fluxo de Provas/Painel do Professor.');
+      if (!item.provaId) {
+        window.alert('Não foi possível identificar a prova desta resposta.');
+        return;
+      }
+      navigate('/correcoes/detalhe', {
+        state: {
+          tipo: 'provas',
+          provaId: item.provaId,
+          alunoId: item.alunoId,
+          turma: item.turma,
+          materia: item.materia,
+          turno: item.turno,
+          listFilters: listFiltersAtuais,
+        },
+      });
       return;
     }
     navigate('/correcoes/detalhe', {
@@ -315,6 +396,7 @@ export default function Correcoes() {
         turma: item.turma,
         materia: item.materia,
         turno: item.turno,
+        listFilters: listFiltersAtuais,
       },
     });
   };

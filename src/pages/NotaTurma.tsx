@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import type { NotasListFiltersState } from '@/pages/Notas';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
@@ -10,7 +11,17 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import {
+  isProvasRelacionalEnabled,
+  listProvasRelacionalParaProfessor,
+  listRespostasRelacionalParaProfessor,
+} from '@/lib/provasRelApi';
+import {
+  isNotasRelacionalEnabled,
+  listNotasRelacionalLancamentos,
+  patchNotaRelacional,
+} from '@/lib/notasRelApi';
 
 interface Lancamento {
   id: string;
@@ -46,6 +57,8 @@ interface ProvaResposta {
   disciplina: string;
   status: 'Enviado' | 'Corrigido';
   notaFinal?: number | null;
+  /** Período/bimestre da prova (para filtrar média no lançamento correto). */
+  periodo?: string;
 }
 
 interface AtividadeEntrega {
@@ -60,6 +73,7 @@ interface AtividadeEntrega {
 const lancamentosStorageKey = 'school-compass:notas';
 const notasAlunosStorageKey = 'school-compass:notas-alunos';
 const provasRespostasStorageKey = 'school-compass:provas-respostas';
+const provasStorageKey = 'school-compass:provas';
 const atividadesEntregasStorageKey = 'school-compass:atividades-entregas';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 
@@ -88,6 +102,14 @@ const getTurmaKey = (value?: string) => {
   return normalized.replace(/[^a-z0-9]/g, '');
 };
 
+/** Compara rótulos de bimestre (ex.: "2º Bimestre" com cadastro da prova). */
+const bimestreCompativel = (periodoProva: string | undefined, bimestreLancamento: string) => {
+  const p = normalizeText(periodoProva ?? '').replace(/º/g, 'o').replace(/[^a-z0-9]/g, '');
+  const b = normalizeText(bimestreLancamento).replace(/º/g, 'o').replace(/[^a-z0-9]/g, '');
+  if (!p) return true;
+  return p === b;
+};
+
 const NotaTurma: React.FC = () => {
   const { user } = useAuth();
   const podeEditarNotas = user?.perfil !== UserProfile.SECRETARIA;
@@ -102,32 +124,164 @@ const NotaTurma: React.FC = () => {
     [id, lancamentos],
   );
   const lancamentoFromState = useMemo(() => {
-    const state = location.state as { lancamento?: Lancamento } | null;
+    const state = location.state as { lancamento?: Lancamento; listFilters?: NotasListFiltersState } | null;
     return state?.lancamento ?? null;
   }, [location.state]);
+
   const lancamentoAtual = lancamento ?? lancamentoFromState;
+
+  const listFiltersRetorno = useMemo((): NotasListFiltersState => {
+    const st = location.state as { listFilters?: NotasListFiltersState } | null;
+    if (st?.listFilters) return st.listFilters;
+    if (lancamentoAtual) {
+      return {
+        turmaSelecionada: lancamentoAtual.turma,
+        disciplinaSelecionada: lancamentoAtual.disciplina,
+        bimestreSelecionado: lancamentoAtual.bimestre,
+        busca: '',
+        statusSelecionado: 'todos',
+      };
+    }
+    return {
+      turmaSelecionada: 'todas',
+      disciplinaSelecionada: 'todas',
+      bimestreSelecionado: 'todos',
+      busca: '',
+      statusSelecionado: 'todos',
+    };
+  }, [location.state, lancamentoAtual]);
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(
     () => loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
   );
+  const [storageTick, setStorageTick] = useState(0);
+  const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaResposta[]>([]);
+  const [carregandoNotasRel, setCarregandoNotasRel] = useState(false);
+
+  useEffect(() => {
+    const keys = [
+      notasAlunosStorageKey,
+      provasRespostasStorageKey,
+      provasStorageKey,
+      atividadesEntregasStorageKey,
+      usersStorageKey,
+      vinculosStorageKey,
+      turmasStorageKey,
+    ];
+    void syncKeysFromBackend(keys).finally(() => {
+      setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
+      setStorageTick((t) => t + 1);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isProvasRelacionalEnabled() || !user?.id) {
+      setRespostasProvasRel([]);
+      return;
+    }
+    void Promise.all([
+      listRespostasRelacionalParaProfessor(user.id),
+      listProvasRelacionalParaProfessor(user.id),
+    ])
+      .then(([respostas, provas]) => {
+        const periodoPorProva = new Map<string, string>();
+        provas.forEach((p) => {
+          if (p.id != null) periodoPorProva.set(String(p.id), p.periodo ?? '');
+        });
+        setRespostasProvasRel(
+          respostas.map((r) => {
+            const corrigido =
+              r.status === 'Corrigido' ||
+              (typeof r.corrigidoEm === 'string' && r.corrigidoEm.length > 0) ||
+              (Array.isArray(r.corrigidoEm) && r.corrigidoEm.length > 0);
+            return {
+              id: String(r.id ?? `${r.provaId}-${r.alunoId}`),
+              provaId: String(r.provaId),
+              alunoId: String(r.alunoId),
+              alunoNome: r.alunoNome ?? '',
+              turma: r.turma ?? '',
+              disciplina: r.disciplina ?? '',
+              status: corrigido ? 'Corrigido' : 'Enviado',
+              notaFinal: r.notaFinal ?? null,
+              periodo: periodoPorProva.get(String(r.provaId)) ?? '',
+            };
+          }),
+        );
+      })
+      .catch(() => setRespostasProvasRel([]));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!lancamentoAtual || !isNotasRelacionalEnabled()) return;
+    setCarregandoNotasRel(true);
+    void listNotasRelacionalLancamentos(lancamentoAtual.turma, lancamentoAtual.disciplina, lancamentoAtual.bimestre)
+      .then((rows) => {
+        const fromApi: NotaAluno[] = rows.map((r) => ({
+          id: String(r.id ?? createId('nota-aluno-rel')),
+          alunoId: String(r.alunoId ?? ''),
+          alunoNome: r.alunoNome ?? `Aluno ${r.alunoId ?? ''}`,
+          turma: r.turmaNome ?? lancamentoAtual.turma,
+          disciplina: r.disciplinaNome ?? lancamentoAtual.disciplina,
+          bimestre: r.bimestre ?? lancamentoAtual.bimestre,
+          trabalhosNota: r.trabalhosNota ?? null,
+          provasNota: r.provasNota ?? null,
+          nota: r.nota ?? null,
+        }));
+        if (fromApi.length === 0) return;
+        setNotasAlunos((prev) => {
+          const keyOf = (n: NotaAluno) => `${n.alunoId}::${normalizeText(n.turma)}::${normalizeText(n.disciplina)}::${normalizeText(n.bimestre)}`;
+          const map = new Map<string, NotaAluno>(prev.map((n) => [keyOf(n), n]));
+          fromApi.forEach((n) => map.set(keyOf(n), n));
+          const merged = Array.from(map.values());
+          saveToStorage(notasAlunosStorageKey, merged);
+          return merged;
+        });
+      })
+      .catch(() => {
+        // fallback local
+      })
+      .finally(() => setCarregandoNotasRel(false));
+  }, [lancamentoAtual?.turma, lancamentoAtual?.disciplina, lancamentoAtual?.bimestre]);
+
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
-    [],
+    [storageTick],
   );
   const vinculos = useMemo(
     () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
-    [],
+    [storageTick],
   );
   const turmas = useMemo(
     () => loadFromStorage<Turma[]>(turmasStorageKey, []),
-    [],
+    [storageTick],
   );
-  const respostasProvas = useMemo(
+  const respostasProvasLocal = useMemo(
     () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
-    [],
+    [storageTick],
   );
+  const provasCatalogo = useMemo(
+    () => loadFromStorage<Array<{ id: string; periodo?: string }>>(provasStorageKey, []),
+    [storageTick],
+  );
+  const periodoPorProvaIdLocal = useMemo(
+    () => new Map(provasCatalogo.map((p) => [p.id, p.periodo ?? ''])),
+    [provasCatalogo],
+  );
+
+  const respostasProvas = useMemo(() => {
+    const byKey = new Map<string, ProvaResposta>();
+    const keyOf = (r: ProvaResposta) => `${r.provaId}-${r.alunoId}`;
+    const enriquecer = (r: ProvaResposta): ProvaResposta => ({
+      ...r,
+      periodo: r.periodo ?? periodoPorProvaIdLocal.get(r.provaId) ?? '',
+    });
+    respostasProvasLocal.forEach((r) => byKey.set(keyOf(r), enriquecer({ ...r })));
+    respostasProvasRel.forEach((r) => byKey.set(keyOf(r), enriquecer({ ...r })));
+    return Array.from(byKey.values());
+  }, [respostasProvasLocal, respostasProvasRel, periodoPorProvaIdLocal]);
+
   const entregasAtividades = useMemo(
     () => loadFromStorage<AtividadeEntrega[]>(atividadesEntregasStorageKey, []),
-    [],
+    [storageTick],
   );
 
   const alunosTurmaAtual = useMemo(() => {
@@ -225,19 +379,20 @@ const NotaTurma: React.FC = () => {
     }));
   }, [notasOrdenadas]);
 
-  const calcularMediaFinal = (alunoId: string, turma: string, disciplina: string) => {
+  const calcularMediaFinal = (alunoId: string, turma: string, disciplina: string, bimestre: string) => {
     const provasAluno = respostasProvas.filter(
       (resposta) =>
-        resposta.alunoId === alunoId &&
-        resposta.turma === turma &&
-        resposta.disciplina === disciplina &&
+        String(resposta.alunoId) === String(alunoId) &&
+        normalizeText(resposta.turma) === normalizeText(turma) &&
+        normalizeText(resposta.disciplina) === normalizeText(disciplina) &&
         resposta.status === 'Corrigido' &&
-        typeof resposta.notaFinal === 'number',
+        typeof resposta.notaFinal === 'number' &&
+        bimestreCompativel(resposta.periodo, bimestre),
     );
     const trabalhosAluno = entregasAtividades.filter(
       (entrega) =>
-        entrega.alunoId === alunoId &&
-        entrega.disciplina === disciplina &&
+        String(entrega.alunoId) === String(alunoId) &&
+        normalizeText(entrega.disciplina) === normalizeText(disciplina) &&
         typeof entrega.nota === 'number',
     );
 
@@ -278,13 +433,7 @@ const NotaTurma: React.FC = () => {
         aluno.alunoId,
         lancamentoAtual.turma,
         lancamentoAtual.disciplina,
-      );
-      const notasRegistradas = notasAlunos.filter(
-        (nota) =>
-          nota.alunoId === aluno.alunoId &&
-          nota.turma === lancamentoAtual.turma &&
-          nota.disciplina === lancamentoAtual.disciplina &&
-          typeof nota.nota === 'number',
+        lancamentoAtual.bimestre,
       );
       const notaAtualBimestre =
         notasAlunos.find(
@@ -304,8 +453,6 @@ const NotaTurma: React.FC = () => {
           : mediaProvas;
       const notaExibicao =
         typeof notaAtualBimestre?.nota === 'number' ? notaAtualBimestre.nota : mediaFinal;
-      const totalRegistrado = notasRegistradas.reduce((acc, item) => acc + (item.nota ?? 0), 0);
-      const temTotal = notasRegistradas.length > 0 || typeof notaExibicao === 'number';
 
       return {
         ...aluno,
@@ -315,9 +462,8 @@ const NotaTurma: React.FC = () => {
         trabalhosExibicao,
         provasExibicao,
         notaExibicao,
-        totalBimestres: temTotal
-          ? Math.round((notasRegistradas.length > 0 ? totalRegistrado : notaExibicao ?? 0) * 10) / 10
-          : null,
+        /** Média do bimestre atual (mesma lógica da coluna Nota). */
+        totalBimestres: typeof notaExibicao === 'number' ? notaExibicao : null,
       };
     });
   }, [alunosDaTurma, entregasAtividades, lancamentoAtual, notasAlunos, respostasProvas]);
@@ -340,6 +486,30 @@ const NotaTurma: React.FC = () => {
     });
     setNotasAlunos(updated);
     saveToStorage(notasAlunosStorageKey, updated);
+
+    if (isNotasRelacionalEnabled()) {
+      const row = updated.find(
+        (nota) =>
+          nota.alunoId === alunoId &&
+          nota.turma === lancamentoAtual.turma &&
+          nota.disciplina === lancamentoAtual.disciplina &&
+          nota.bimestre === lancamentoAtual.bimestre,
+      );
+      const alunoNome = row?.alunoNome ?? usuarios.find((u) => String(u.id) === String(alunoId))?.nome ?? '';
+      const alunoIdNum = Number(alunoId);
+      void patchNotaRelacional({
+        alunoId: Number.isFinite(alunoIdNum) ? alunoIdNum : undefined,
+        alunoNome,
+        turmaNome: lancamentoAtual.turma,
+        disciplinaNome: lancamentoAtual.disciplina,
+        bimestre: lancamentoAtual.bimestre,
+        trabalhosNota: field === 'trabalhosNota' ? normalizedValue : row?.trabalhosNota ?? null,
+        provasNota: field === 'provasNota' ? normalizedValue : row?.provasNota ?? null,
+        nota: field === 'nota' ? normalizedValue : row?.nota ?? null,
+      }).catch(() => {
+        // mantém fallback local quando API indisponível
+      });
+    }
   };
 
   if (!lancamentoAtual) {
@@ -349,7 +519,7 @@ const NotaTurma: React.FC = () => {
           <h1 className="font-display text-3xl font-bold text-foreground">
             Notas nao encontradas
           </h1>
-          <Link to="/notas">
+          <Link to="/notas" state={{ listFilters: listFiltersRetorno }}>
             <Button variant="outline">
               <ArrowLeft className="w-4 h-4" />
               Voltar
@@ -363,13 +533,8 @@ const NotaTurma: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Link to="/notas">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-          </Link>
-          <div>
+        <div className="flex flex-row items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
             <h1 className="font-display text-3xl font-bold text-foreground">
               Notas da turma
             </h1>
@@ -377,6 +542,12 @@ const NotaTurma: React.FC = () => {
               {lancamentoAtual.turma} - {lancamentoAtual.disciplina} - {lancamentoAtual.bimestre}
             </p>
           </div>
+          <Link to="/notas" state={{ listFilters: listFiltersRetorno }} className="shrink-0">
+            <Button variant="outline" className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              Voltar
+            </Button>
+          </Link>
         </div>
 
         <Card>
@@ -384,6 +555,7 @@ const NotaTurma: React.FC = () => {
             <CardTitle className="text-lg">Alunos e notas</CardTitle>
             <CardDescription>
               Visualize as notas registradas para esta turma.
+              {carregandoNotasRel ? ' Sincronizando banco...' : ''}
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -31,6 +31,16 @@ public class Questao {
 
     private String respostaCorreta;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private Double pontos = 1d;
+
+    @PrePersist
+    @PreUpdate
+    private void ensureDefaults() {
+        if (pontos == null) pontos = 1d;
+    }
+
     public enum TipoQuestao {
         MULTIPLA_ESCOLHA,
         ABERTA

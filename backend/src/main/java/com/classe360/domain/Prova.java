@@ -35,4 +35,27 @@ public class Prova {
 
     @Column(nullable = false)
     private Boolean ativa;
+
+    private String periodo;
+
+    private String horario;
+
+    @Column(length = 4000)
+    private String instrucoes;
+
+    private String status;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean publicada = false;
+
+    private String turno;
+
+    @PrePersist
+    @PreUpdate
+    private void ensureDefaults() {
+        if (publicada == null) publicada = false;
+        if (ativa == null) ativa = true;
+        if (status == null || status.isBlank()) status = "Agendada";
+    }
 }

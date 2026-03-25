@@ -26,6 +26,9 @@ public class Nota {
     @ManyToOne(optional = false)
     private Periodo periodo;
 
-    @Column(nullable = false)
+    private Double valorTrabalhos;
+
+    private Double valorProvas;
+
     private Double valor;
 }
