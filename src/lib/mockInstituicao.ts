@@ -14,16 +14,32 @@ export interface DadosInstituicao {
 
 export const instituicaoStorageKey = 'school-compass:instituicao';
 
-export const defaultInstituicao: DadosInstituicao = {
-  nome: 'Colégio Classe 360',
-  cnpj: '',
-  endereco: '',
-  numero: '',
-  complemento: '',
-  bairro: '',
-  cidade: '',
-  estado: '',
-  cep: '',
-  telefone: '',
-  email: '',
-};
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export const defaultInstituicao: DadosInstituicao = API_URL
+  ? {
+      nome: '',
+      cnpj: '',
+      endereco: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+      cidade: '',
+      estado: '',
+      cep: '',
+      telefone: '',
+      email: '',
+    }
+  : {
+      nome: 'Colégio Classe 360',
+      cnpj: '',
+      endereco: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+      cidade: '',
+      estado: '',
+      cep: '',
+      telefone: '',
+      email: '',
+    };

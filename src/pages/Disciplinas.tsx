@@ -10,6 +10,15 @@ import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mo
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { Turma, turmasStorageKey, defaultTurmas } from '@/lib/mockTurmas';
 import { Link } from 'react-router-dom';
+import {
+  deleteDisciplinaApi,
+  isApiEnabled,
+  listDisciplinasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -63,30 +72,76 @@ const Disciplinas: React.FC = () => {
   const podeGerenciar = user?.perfil === UserProfile.GESTOR || user?.perfil === UserProfile.ADMINISTRADOR || user?.perfil === UserProfile.SECRETARIA;
   const podeRemoverDisciplina = user?.perfil === UserProfile.ADMINISTRADOR;
   const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
   );
   const [usuarios, setUsuarios] = useState<StoredUser[]>(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
   );
   const [turmas, setTurmas] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
 
+  const refreshFromApi = () => {
+    if (!isApiEnabled()) return Promise.resolve();
+    return Promise.all([listDisciplinasApi(), listUsuariosApi(), listTurmasApi()])
+      .then(([disciplinasApi, usuariosApi, turmasApi]) => {
+        const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+          id: String(d.id ?? ''),
+          nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          cor: d.cor ?? undefined,
+        }));
+        const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
+          turno: undefined,
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          turmas: [],
+        }));
+        const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          id: String(t.id ?? ''),
+          nome: t.nome ?? `Turma ${t.id ?? ''}`,
+          ...mapTurnoFieldsFromTurmaApi(t),
+          alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+          professor: t.professorId ? String(t.professorId) : '',
+          status: (t.status as Turma['status']) ?? 'Ativa',
+          proximaAula: '',
+        }));
+        setDisciplinas(disciplinasMapped);
+        setUsuarios(usuariosMapped);
+        setTurmas(turmasMapped);
+        saveToStorage(disciplinasStorageKey, disciplinasMapped);
+        saveToStorage(usersStorageKey, usuariosMapped);
+        saveToStorage(turmasStorageKey, turmasMapped);
+      })
+      .catch(() => null);
+  };
+
   useEffect(() => {
+    if (isApiEnabled()) {
+      void refreshFromApi().finally(() => {
+        void loadVinculosDisciplinaTurma()
+          .then((rows) => setVinculos(rows as DisciplinaVinculo[]))
+          .catch(() => setVinculos([]));
+      });
+      return;
+    }
     const keys = [disciplinasStorageKey, vinculosStorageKey, usersStorageKey, turmasStorageKey];
     void syncKeysFromBackend(keys).finally(() => {
-      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
+      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas));
       setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
-      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
-      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers));
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
     });
   }, []);
 
   useEffect(() => {
-    if (!API_URL) return;
+    if (!API_URL || isApiEnabled()) return;
     let cancelled = false;
     const token = localStorage.getItem('token');
     fetch(`${API_URL}/api/usuarios?size=500`, {
@@ -116,7 +171,11 @@ const Disciplinas: React.FC = () => {
         }));
         setUsuarios(mapped);
       })
-      .catch(() => !cancelled && setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers)));
+      .catch(() => {
+        if (!cancelled && !isApiEnabled()) {
+          setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -146,6 +205,15 @@ const Disciplinas: React.FC = () => {
   const handleDelete = (item: CatalogItem) => {
     const confirmed = window.confirm(`Deseja remover a disciplina "${item.nome}"?`);
     if (!confirmed) return;
+    if (isApiEnabled()) {
+      const idNum = Number(item.id);
+      if (Number.isFinite(idNum)) {
+        void deleteDisciplinaApi(idNum)
+          .then(() => refreshFromApi())
+          .catch(() => window.alert('Não foi possível remover a disciplina. Verifique a API e tente novamente.'));
+      }
+      return;
+    }
     const updated = disciplinas.filter((row) => row.id !== item.id);
     setDisciplinas(updated);
     saveToStorage(disciplinasStorageKey, updated);

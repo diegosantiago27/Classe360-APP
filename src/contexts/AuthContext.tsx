@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, AuthState, LoginCredentials, RegisterData, UserProfile } from '@/types/auth';
 import { syncKeysFromBackend } from '@/lib/mockStorage';
-import { addSolicitacao, findApprovedUserByCpf } from '@/lib/mockSolicitacoes';
 
 export type RegisterResult =
   | { success: true; type: 'solicitation' }
@@ -18,75 +17,15 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Mock users for demonstration
-const mockUsers: User[] = [
-  {
-    id: '1',
-    cpf: '11111111111',
-    nome: 'Administrador',
-    email: 'admin@classe360.com',
-    perfil: UserProfile.ADMINISTRADOR,
-    primeiroAcesso: false,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    cpf: '22222222222',
-    nome: 'Maria Silva',
-    email: 'maria@escola.com',
-    perfil: UserProfile.GESTOR,
-    primeiroAcesso: false,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    cpf: '33333333333',
-    nome: 'Ana Costa',
-    email: 'ana@escola.com',
-    perfil: UserProfile.PROFESSOR,
-    primeiroAcesso: false,
-    materias: ['Matemática', 'Física'],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '4',
-    cpf: '44444444444',
-    nome: 'Pedro Oliveira',
-    email: 'pedro@escola.com',
-    perfil: UserProfile.ALUNO,
-    primeiroAcesso: false,
-    turmaId: '9A',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '5',
-    cpf: '55555555555',
-    nome: 'Carla Secretária',
-    email: 'secretaria@escola.com',
-    perfil: UserProfile.SECRETARIA,
-    primeiroAcesso: false,
-    createdAt: new Date().toISOString(),
-  },
-];
-
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
 const baseSyncKeys = [
   'school-compass:usuarios',
   'school-compass:turmas',
   'school-compass:disciplinas',
-  'school-compass:disciplinas-vinculos',
-  'school-compass:grade-aulas',
-  'school-compass:disciplinas-cores',
   'school-compass:periodos',
-  'school-compass:notas',
-  'school-compass:notas-alunos',
   'school-compass:frequencia',
   'school-compass:frequencia-diaria',
-  'school-compass:provas',
-  'school-compass:provas-respostas',
-  'school-compass:provas-sessoes',
-  'school-compass:provas-respostas',
   'school-compass:atividades',
   'school-compass:atividades-entregas',
   'school-compass:materiais',
@@ -129,7 +68,9 @@ async function apiRequest<T>(
       (typeof data?.message === 'string' ? data.message : null) ??
       (typeof data?.error === 'string' ? data.error : null) ??
       `Erro HTTP ${res.status}`;
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
   return data as T;
 }
@@ -194,103 +135,62 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = async (credentials: LoginCredentials): Promise<boolean> => {
-    // Preferir backend quando configurado
-    if (API_URL) {
-      try {
-        const resp = await apiRequest<{ token: string; user: User }>('/api/v1/auth/login', {
-          method: 'POST',
-          body: JSON.stringify(credentials),
-        });
+    if (!API_URL) {
+      throw new Error('API_URL não configurada. Configure o backend antes de fazer login.');
+    }
 
+    try {
+      const resp = await apiRequest<{ token: string; user: User }>('/api/v1/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(credentials),
+      });
+
+      localStorage.setItem('token', resp.token);
+      localStorage.setItem('user', JSON.stringify(resp.user));
+      void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
+
+      setAuthState({
+        user: resp.user,
+        token: resp.token,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+      return true;
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 401) return false;
+      throw err;
+    }
+  };
+
+  const register = async (data: RegisterData): Promise<RegisterResult> => {
+    if (!API_URL) {
+      return { success: false, message: 'API_URL não configurada. Configure o backend antes de se cadastrar.' };
+    }
+
+    try {
+      const resp = await apiRequest<{ token?: string; user?: User; id?: number; message?: string }>('/api/v1/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+
+      // Se retornou token/user = fluxo antigo (login direto). Se retornou id/message = solicitação enviada.
+      if (resp.token && resp.user) {
         localStorage.setItem('token', resp.token);
         localStorage.setItem('user', JSON.stringify(resp.user));
         void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
-
         setAuthState({
           user: resp.user,
           token: resp.token,
           isAuthenticated: true,
           isLoading: false,
         });
-        return true;
-      } catch {
-        // fallback pro mock
+        return { success: true, type: 'logged_in' };
       }
-    }
-
-    // Mock (modo demo/offline)
-    await new Promise(resolve => setTimeout(resolve, 600));
-    const cpfNorm = credentials.cpf.replace(/\D/g, '');
-    let user: User | null = mockUsers.find(u => u.cpf === cpfNorm) ?? null;
-    if (!user) {
-      const approved = findApprovedUserByCpf(cpfNorm);
-      if (approved && approved.senha === credentials.senha) {
-        user = approved.user;
-      }
-    }
-    if (!user) return false;
-    // Admin (111.111.111-11) exige senha admin@Classe360
-    if (cpfNorm === '11111111111' && credentials.senha !== 'admin@Classe360') return false;
-
-    const token = btoa(JSON.stringify({ id: user.id, exp: Date.now() + 86400000 }));
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
-    setAuthState({
-      user,
-      token,
-      isAuthenticated: true,
-      isLoading: false,
-    });
-    return true;
-  };
-
-  const register = async (data: RegisterData): Promise<RegisterResult> => {
-    if (API_URL) {
-      try {
-        const resp = await apiRequest<{ token?: string; user?: User; id?: number; message?: string }>('/api/v1/auth/register', {
-          method: 'POST',
-          body: JSON.stringify(data),
-        });
-
-        // Se retornou token/user = fluxo antigo (login direto). Se retornou id/message = solicitação enviada.
-        if (resp.token && resp.user) {
-          localStorage.setItem('token', resp.token);
-          localStorage.setItem('user', JSON.stringify(resp.user));
-          void syncKeysFromBackend(buildSyncKeysForUser(resp.user?.id));
-          setAuthState({
-            user: resp.user,
-            token: resp.token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return { success: true, type: 'logged_in' };
-        }
-        return { success: true, type: 'solicitation' };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Erro ao conectar com o servidor';
-        return { success: false, message: msg };
-      }
-    }
-
-    // Mock (modo demo/offline): cria solicitação pendente em vez de login direto
-    try {
-      addSolicitacao({
-        cpf: data.cpf.replace(/\D/g, ''),
-        nome: data.nome,
-        email: data.email,
-        senha: data.senha,
-        dataNascimento: data.dataNascimento,
-        telefone: data.telefone,
-        rua: data.rua,
-        numero: data.numero,
-        complemento: data.complemento,
-        bairro: data.bairro,
-        cidade: data.cidade,
-        cep: data.cep,
-      });
       return { success: true, type: 'solicitation' };
-    } catch {
-      return { success: false };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao conectar com o servidor';
+      return { success: false, message: msg };
     }
   };
 

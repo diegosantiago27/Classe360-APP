@@ -179,7 +179,7 @@ public class NotaLancamentoService {
             .orElseThrow(() -> new IllegalArgumentException("Aluno não encontrado"));
     }
 
-    private Turma resolverTurma(Long turmaId, String turmaNome) {
+    public Turma resolverTurma(Long turmaId, String turmaNome) {
         if (turmaId != null) {
             return turmaRepository.findById(turmaId).orElseThrow(() -> new IllegalArgumentException("Turma não encontrada"));
         }
@@ -189,7 +189,7 @@ public class NotaLancamentoService {
             .orElseThrow(() -> new IllegalArgumentException("Turma não encontrada"));
     }
 
-    private Disciplina resolverDisciplina(Long disciplinaId, String disciplinaNome) {
+    public Disciplina resolverDisciplina(Long disciplinaId, String disciplinaNome) {
         if (disciplinaId != null) {
             return disciplinaRepository.findById(disciplinaId)
                 .orElseThrow(() -> new IllegalArgumentException("Disciplina não encontrada"));
@@ -202,7 +202,7 @@ public class NotaLancamentoService {
             .orElseThrow(() -> new IllegalArgumentException("Disciplina não encontrada"));
     }
 
-    private Periodo resolverPeriodo(Long periodoId, String bimestre) {
+    public Periodo resolverPeriodo(Long periodoId, String bimestre) {
         if (periodoId != null) {
             return periodoRepository.findById(periodoId)
                 .orElseThrow(() -> new IllegalArgumentException("Período não encontrado"));

@@ -1,6 +1,9 @@
 package com.classe360.web.rest.v1;
 
+import com.classe360.service.NotaLancamentoResumoService;
 import com.classe360.service.NotaLancamentoService;
+import com.classe360.service.dto.NotaLancamentoCabecalhoCreateDTO;
+import com.classe360.service.dto.NotaLancamentoResumoDTO;
 import com.classe360.service.dto.NotaLancamentoUpsertDTO;
 import com.classe360.service.dto.NotaLancamentoViewDTO;
 import java.util.List;
@@ -14,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class NotasRelacionalResource {
 
     private final NotaLancamentoService notaLancamentoService;
+    private final NotaLancamentoResumoService notaLancamentoResumoService;
 
     @GetMapping("/lancamentos")
     public ResponseEntity<List<NotaLancamentoViewDTO>> listarLancamentos(
@@ -37,5 +41,25 @@ public class NotasRelacionalResource {
     @PutMapping("/lancamentos")
     public ResponseEntity<List<NotaLancamentoViewDTO>> upsertLote(@RequestBody List<NotaLancamentoUpsertDTO> body) {
         return ResponseEntity.ok(notaLancamentoService.upsertLote(body));
+    }
+
+    @GetMapping("/lancamentos-resumo")
+    public ResponseEntity<List<NotaLancamentoResumoDTO>> listarResumoLancamentos() {
+        return ResponseEntity.ok(notaLancamentoResumoService.listarResumo());
+    }
+
+    @PostMapping("/cabecalhos")
+    public ResponseEntity<NotaLancamentoResumoDTO> criarCabecalho(@RequestBody NotaLancamentoCabecalhoCreateDTO body) {
+        try {
+            return ResponseEntity.ok(notaLancamentoResumoService.criarCabecalho(body));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @DeleteMapping("/cabecalhos/{id}")
+    public ResponseEntity<Void> removerCabecalho(@PathVariable Long id) {
+        notaLancamentoResumoService.removerCabecalho(id);
+        return ResponseEntity.noContent().build();
     }
 }

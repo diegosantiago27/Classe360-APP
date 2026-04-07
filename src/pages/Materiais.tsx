@@ -5,9 +5,12 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import { isApiEnabled, listDisciplinasApi, listGradeAulasApi, listTurmasApi } from '@/lib/entityCrudApi';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface DisciplinaVinculoStorage {
   disciplinaId: string;
@@ -64,10 +67,10 @@ const resolveDiaGrade = (raw: string): string => {
 const Materiais: React.FC = () => {
   const { user } = useAuth();
   const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(() =>
-    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [turmas, setTurmas] = useState<Turma[]>(() =>
-    loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculoStorage[]>(() =>
     loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
@@ -77,10 +80,54 @@ const Materiais: React.FC = () => {
   );
 
   useEffect(() => {
+    if (isApiEnabled()) {
+      void Promise.all([
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listGradeAulasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([disciplinasApi, turmasApi, gradeRows, vincRows]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+            cor: d.cor ?? undefined,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status ?? 'Ativa',
+            professor: t.professorId ? String(t.professorId) : '',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            proximaAula: '',
+          }));
+          const mapped: AulaCadastrada[] = gradeRows
+            .filter((r) => r.disciplinaId != null && r.turmaId != null)
+            .map((r) => ({
+              id: String(r.id ?? ''),
+              disciplinaId: String(r.disciplinaId),
+              turmaId: String(r.turmaId),
+              dia: r.dia ?? '',
+              inicio: r.inicio ?? '',
+              fim: r.fim ?? '',
+            }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          setDisciplinas(disciplinasMapped);
+          setTurmas(turmasMapped);
+          setVinculos(vincRows as DisciplinaVinculoStorage[]);
+          setAulasGrade(mapped);
+        })
+        .catch(() => null);
+      return;
+    }
     const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey, aulasStorageKey];
     void syncKeysFromBackend(keys).finally(() => {
-      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
-      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setDisciplinas(
+        loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+      );
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
       setVinculos(loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []));
       setAulasGrade(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
     });
@@ -128,7 +175,7 @@ const Materiais: React.FC = () => {
       out.push({
         disciplina: disciplina.nome,
         turmaNome: turma.nome,
-        turno: turma.turno,
+        turno: rotuloTurnoParaExibicao(turma),
         dia,
         horario: `${aula.inicio} - ${aula.fim}`,
       });
@@ -275,7 +322,7 @@ const Materiais: React.FC = () => {
                     <CardHeader className="pb-2">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg">{item.turma.nome}</CardTitle>
-                        <Badge variant="secondary">{item.turma.turno}</Badge>
+                        <Badge variant="secondary">{rotuloTurnoParaExibicao(item.turma)}</Badge>
                       </div>
                       <CardDescription>{item.turma.nome.split(' ')[0]} ano</CardDescription>
                     </CardHeader>

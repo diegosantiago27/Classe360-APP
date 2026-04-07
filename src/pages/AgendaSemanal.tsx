@@ -11,6 +11,9 @@ import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mo
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
+import { deleteGradeAulaApi, isApiEnabled, listDisciplinasApi, listGradeAulasApi, listTurmasApi } from '@/lib/entityCrudApi';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface DisciplinaVinculoStorage {
   disciplinaId: string;
@@ -64,10 +67,10 @@ const AgendaSemanal: React.FC = () => {
   const podeRemover = user?.perfil === UserProfile.ADMINISTRADOR;
 
   const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [turmas, setTurmas] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculoStorage[]>(
     () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
@@ -75,24 +78,72 @@ const AgendaSemanal: React.FC = () => {
   const [aulas, setAulas] = useState<AulaCadastrada[]>(
     () => loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
   );
-  const [coresDisciplinas, setCoresDisciplinas] = useState<Record<string, string>>(
-    () => loadFromStorage<Record<string, string>>(coresStorageKey, {}),
-  );
+
+  const coresDisciplinas = useMemo(() => {
+    const m: Record<string, string> = {};
+    disciplinas.forEach((d) => {
+      m[d.id] = d.cor && d.cor.trim() ? d.cor : 'blue';
+    });
+    return m;
+  }, [disciplinas]);
 
   useEffect(() => {
-    const keys = [
+    const keysOffline = [
       disciplinasStorageKey,
       turmasStorageKey,
       vinculosStorageKey,
       aulasStorageKey,
       coresStorageKey,
     ];
-    void syncKeysFromBackend(keys).finally(() => {
-      setDisciplinas(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
-      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+    if (isApiEnabled()) {
+      void Promise.all([
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listGradeAulasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([disciplinasApi, turmasApi, gradeRows, vincRows]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+            cor: d.cor ?? undefined,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status === 'Inativa' ? 'Inativa' : 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: '',
+            proximaAula: '',
+          }));
+          const mappedAulas: AulaCadastrada[] = gradeRows
+            .filter((r) => r.disciplinaId != null && r.turmaId != null)
+            .map((r) => ({
+              id: String(r.id ?? ''),
+              disciplinaId: String(r.disciplinaId),
+              turmaId: String(r.turmaId),
+              dia: r.dia ?? '',
+              inicio: r.inicio ?? '',
+              fim: r.fim ?? '',
+            }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          setDisciplinas(disciplinasMapped);
+          setTurmas(turmasMapped);
+          setVinculos(vincRows as DisciplinaVinculoStorage[]);
+          setAulas(mappedAulas);
+        })
+        .catch(() => null);
+      return;
+    }
+    void syncKeysFromBackend(keysOffline).finally(() => {
+      setDisciplinas(
+        loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+      );
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
       setVinculos(loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []));
       setAulas(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
-      setCoresDisciplinas(loadFromStorage<Record<string, string>>(coresStorageKey, {}));
     });
   }, []);
 
@@ -117,7 +168,7 @@ const AgendaSemanal: React.FC = () => {
           disciplina: disciplina.nome,
           professor,
           turma: turma.nome,
-          turno: turma.turno,
+          turno: rotuloTurnoParaExibicao(turma),
           dia: aula.dia,
           inicio: aula.inicio,
           fim: aula.fim,
@@ -191,12 +242,27 @@ const AgendaSemanal: React.FC = () => {
     const confirmed = window.confirm('Deseja remover este registro da agenda?');
     if (!confirmed) return;
     const updated = aulas.filter((aula) => aula.id !== id);
+    if (isApiEnabled()) {
+      const idNum = Number(id);
+      if (Number.isFinite(idNum)) {
+        void deleteGradeAulaApi(idNum)
+          .then(() => setAulas(updated))
+          .catch(() => {
+            window.alert('Não foi possível remover a aula. Verifique a API e tente novamente.');
+          });
+      }
+      return;
+    }
     setAulas(updated);
     saveToStorage(aulasStorageKey, updated);
   };
 
   const handleRemoverDuplicadas = () => {
     if (!podeRemover) return;
+    if (isApiEnabled()) {
+      window.alert('A remoção de duplicadas deve ser feita no banco de dados.');
+      return;
+    }
     const seen = new Set<string>();
     const updated = aulas.filter((aula) => {
       const signature = `${aula.disciplinaId}|${aula.turmaId}|${aula.dia}|${aula.inicio}|${aula.fim}`;

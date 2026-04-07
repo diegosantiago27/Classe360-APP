@@ -18,4 +18,7 @@ public class Disciplina {
     private String nome;
 
     private String descricao;
+
+    @Column(length = 32)
+    private String cor;
 }

@@ -65,3 +65,43 @@ export const patchNotaRelacional = async (
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+
+export interface NotaLancamentoResumoApi {
+  id: string;
+  cabecalhoId?: number | null;
+  turmaId?: number;
+  turmaNome?: string;
+  disciplinaId?: number;
+  disciplinaNome?: string;
+  periodoId?: number;
+  bimestre?: string;
+  pendentes?: number;
+  status?: string;
+}
+
+export const listNotasRelacionalResumo = async (): Promise<NotaLancamentoResumoApi[]> =>
+  request<NotaLancamentoResumoApi[]>('/api/v1/notas-rel/lancamentos-resumo');
+
+export const createNotaLancamentoCabecalhoRel = async (payload: {
+  turmaId?: number | null;
+  turmaNome?: string;
+  disciplinaId?: number | null;
+  disciplinaNome?: string;
+  bimestre?: string;
+}): Promise<NotaLancamentoResumoApi> =>
+  request<NotaLancamentoResumoApi>('/api/v1/notas-rel/cabecalhos', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteNotaLancamentoCabecalhoRel = async (cabecalhoId: number): Promise<void> => {
+  if (!API_URL) throw new Error('API_URL not configured');
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${API_URL}/api/v1/notas-rel/cabecalhos/${cabecalhoId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+};

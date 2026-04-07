@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000027-1" author="classe360">
+        <createTable tableName="nota_lancamento_cabecalho">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="periodo_id" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addForeignKeyConstraint
+            baseTableName="nota_lancamento_cabecalho"
+            baseColumnNames="turma_id"
+            constraintName="fk_nlc_turma"
+            referencedTableName="turma"
+            referencedColumnNames="id"/>
+        <addForeignKeyConstraint
+            baseTableName="nota_lancamento_cabecalho"
+            baseColumnNames="disciplina_id"
+            constraintName="fk_nlc_disciplina"
+            referencedTableName="disciplina"
+            referencedColumnNames="id"/>
+        <addForeignKeyConstraint
+            baseTableName="nota_lancamento_cabecalho"
+            baseColumnNames="periodo_id"
+            constraintName="fk_nlc_periodo"
+            referencedTableName="periodo"
+            referencedColumnNames="id"/>
+        <addUniqueConstraint
+            tableName="nota_lancamento_cabecalho"
+            columnNames="turma_id, disciplina_id, periodo_id"
+            constraintName="uk_nota_lancamento_cabecalho_triple"/>
+    </changeSet>
+</databaseChangeLog>

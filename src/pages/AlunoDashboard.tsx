@@ -25,6 +25,24 @@ import {
   Download,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import {
+  isApiEnabled,
+  listAvisosApi,
+  listDisciplinasApi,
+  listFrequenciasApi,
+  listGradeAulasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
+import {
+  getMinhaRespostaRelacional,
+  isProvasRelacionalEnabled,
+  listProvasRelacionalParaAluno,
+  submitRespostaRelacional,
+} from '@/lib/provasRelApi';
+import { isNotasRelacionalEnabled, listNotasRelacionalPorAluno } from '@/lib/notasRelApi';
 
 type QuestionType = 'multipla' | 'aberta';
 
@@ -155,33 +173,35 @@ interface ProvaResposta {
 
 const AlunoDashboard: React.FC = () => {
   const { user } = useAuth();
-  const [provasList, setProvasList] = useState<Prova[]>(() => loadFromStorage<Prova[]>(provasStorageKey, []));
+  const [provasList, setProvasList] = useState<Prova[]>(() =>
+    isApiEnabled() ? [] : loadFromStorage<Prova[]>(provasStorageKey, []),
+  );
   const [respostasRegistradas, setRespostasRegistradas] = useState<ProvaResposta[]>(
-    () => loadFromStorage<ProvaResposta[]>(respostasStorageKey, []),
+    () => (isApiEnabled() ? [] : loadFromStorage<ProvaResposta[]>(respostasStorageKey, [])),
   );
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(() =>
-    loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
   );
   const [presencas, setPresencas] = useState<RegistroPresenca[]>(() =>
-    loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculoDash[]>(() =>
-    loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []),
   );
   const [turmasList, setTurmasList] = useState<Turma[]>(() =>
-    loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [disciplinasList, setDisciplinasList] = useState<CatalogItem[]>(() =>
-    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [usuarios, setUsuarios] = useState<StoredUser[]>(() =>
-    loadFromStorage<StoredUser[]>(usersStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<StoredUser[]>(usersStorageKey, []),
   );
   const [aulasGrade, setAulasGrade] = useState<AulaCadastrada[]>(() =>
-    loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
   );
   const [avisosLista, setAvisosLista] = useState<AvisoItem[]>(() =>
-    loadFromStorage<AvisoItem[]>(avisosStorageKey, []),
+    isApiEnabled() ? [] : loadFromStorage<AvisoItem[]>(avisosStorageKey, []),
   );
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -190,31 +210,201 @@ const AlunoDashboard: React.FC = () => {
   const [modoConsulta, setModoConsulta] = useState(false);
 
   useEffect(() => {
-    const keys = [
-      provasStorageKey,
-      respostasStorageKey,
-      notasAlunosStorageKey,
-      presencasStorageKey,
-      vinculosStorageKey,
-      turmasStorageKey,
-      disciplinasStorageKey,
-      usersStorageKey,
-      aulasStorageKey,
-      avisosStorageKey,
-    ];
-    void syncKeysFromBackend(keys).finally(() => {
-      setProvasList(loadFromStorage<Prova[]>(provasStorageKey, []));
-      setRespostasRegistradas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
-      setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
-      setPresencas(loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []));
-      setVinculos(loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []));
-      setTurmasList(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
-      setDisciplinasList(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
-      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, []));
-      setAulasGrade(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
-      setAvisosLista(loadFromStorage<AvisoItem[]>(avisosStorageKey, []));
-    });
-  }, []);
+    if (!isApiEnabled()) {
+      const keysOnline = [
+        provasStorageKey,
+        respostasStorageKey,
+        notasAlunosStorageKey,
+        presencasStorageKey,
+        turmasStorageKey,
+        disciplinasStorageKey,
+        usersStorageKey,
+        avisosStorageKey,
+      ];
+      const keysOffline = [...keysOnline, vinculosStorageKey, aulasStorageKey];
+      void syncKeysFromBackend(keysOffline).finally(() => {
+        setProvasList(loadFromStorage<Prova[]>(provasStorageKey, []));
+        setRespostasRegistradas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
+        setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
+        setPresencas(loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []));
+        setTurmasList(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
+        setDisciplinasList(
+          loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+        );
+        setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, []));
+        setAvisosLista(loadFromStorage<AvisoItem[]>(avisosStorageKey, []));
+        setVinculos(loadFromStorage<DisciplinaVinculoDash[]>(vinculosStorageKey, []));
+        setAulasGrade(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
+      });
+      return;
+    }
+    void Promise.all([
+      listUsuariosApi(),
+      listDisciplinasApi(),
+      listTurmasApi(),
+      listFrequenciasApi(),
+      listAvisosApi(),
+      listGradeAulasApi(),
+      loadVinculosDisciplinaTurma(),
+    ])
+      .then(([usuariosApi, disciplinasApi, turmasApi, frequenciasApi, avisosApi, gradeRows, vincRows]) => {
+        const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: String(u.role ?? '').includes('PROFESSOR')
+            ? UserProfile.PROFESSOR
+            : String(u.role ?? '').includes('ADMIN')
+              ? UserProfile.ADMINISTRADOR
+              : String(u.role ?? '').includes('GESTOR')
+                ? UserProfile.GESTOR
+                : String(u.role ?? '').includes('SECRETARIA')
+                  ? UserProfile.SECRETARIA
+                  : UserProfile.ALUNO,
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          turmas: [],
+        }));
+        const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+          id: String(d.id ?? ''),
+          nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+        }));
+        const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          id: String(t.id ?? ''),
+          nome: t.nome ?? `Turma ${t.id ?? ''}`,
+          ...mapTurnoFieldsFromTurmaApi(t),
+          status: t.status ?? 'Ativa',
+          professor: t.professorId ? String(t.professorId) : '',
+          alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+          proximaAula: '',
+        }));
+        const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+        const alunoNomeById = new Map(usuariosMapped.map((u) => [u.id, u.nome]));
+        const presencasMapped: RegistroPresenca[] = frequenciasApi.map((f) => ({
+          id: String(f.id ?? ''),
+          turma: turmaNomeById.get(String(f.turmaId ?? '')) ?? `Turma ${f.turmaId ?? ''}`,
+          alunoId: String(f.alunoId ?? ''),
+          alunoNome: alunoNomeById.get(String(f.alunoId ?? '')) ?? '',
+          data: f.data ?? '',
+          status: f.presente ? 'Presente' : 'Falta',
+        }));
+        const avisosMapeados: AvisoItem[] = avisosApi.map((a) => ({
+          id: String(a.id ?? ''),
+          titulo: a.titulo ?? '',
+          descricao: a.conteudo ?? '',
+          data: a.dataCriacao ? new Date(a.dataCriacao).toISOString() : new Date().toISOString(),
+          nivel: (a.conteudo ?? '').includes('[NIVEL:Urgente]')
+            ? 'Urgente'
+            : (a.conteudo ?? '').includes('[NIVEL:Lembrete]')
+              ? 'Lembrete'
+              : 'Informativo',
+        }));
+        setUsuarios(usuariosMapped);
+        setDisciplinasList(disciplinasMapped);
+        setTurmasList(turmasMapped);
+        setPresencas(presencasMapped);
+        setAvisosLista(avisosMapeados);
+        saveToStorage(usersStorageKey, usuariosMapped);
+        saveToStorage(disciplinasStorageKey, disciplinasMapped);
+        saveToStorage(turmasStorageKey, turmasMapped);
+        saveToStorage(presencasStorageKey, presencasMapped);
+        saveToStorage(avisosStorageKey, avisosMapeados);
+        const aulasMapped: AulaCadastrada[] = gradeRows
+          .filter((r) => r.disciplinaId != null && r.turmaId != null)
+          .map((r) => ({
+            id: String(r.id ?? ''),
+            disciplinaId: String(r.disciplinaId),
+            turmaId: String(r.turmaId),
+            dia: r.dia ?? '',
+            inicio: r.inicio ?? '',
+            fim: r.fim ?? '',
+          }));
+        setAulasGrade(aulasMapped);
+        setVinculos(vincRows as DisciplinaVinculoDash[]);
+      })
+      .catch(() => {
+        window.alert('Nao foi possivel carregar dados do painel. Verifique a API e tente novamente.');
+      });
+    if (isProvasRelacionalEnabled() && user?.id && Number.isFinite(Number(user.id))) {
+      void listProvasRelacionalParaAluno(user.id)
+        .then(async (provasRel) => {
+          const provasMapped: Prova[] = provasRel.map((p) => ({
+            id: String(p.id ?? ''),
+            titulo: p.titulo,
+            turma: p.turmaNome ?? '',
+            disciplina: p.disciplinaNome ?? '',
+            periodo: p.periodo ?? '',
+            data: p.data,
+            horario: p.horario ?? '',
+            sala: '',
+            instrucoes: p.instrucoes ?? '',
+            status:
+              p.status === 'Agendada' || p.status === 'Concluida' || p.status === 'Rascunho'
+                ? p.status
+                : 'Agendada',
+            publicada: Boolean(p.publicada),
+            questoes: (p.questoes ?? []).map((q, idx) => ({
+              id: String(q.id ?? `q-${idx}`),
+              enunciado: q.enunciado,
+              tipo: q.tipo === 'aberta' ? 'aberta' : 'multipla',
+              pontos: q.pontos ?? 0,
+              opcoes: q.opcoes ?? [],
+              corretaIndex: q.corretaIndex ?? null,
+            })),
+          }));
+          const respostasLoaded: ProvaResposta[] = [];
+          for (const prova of provasMapped) {
+            if (!Number.isFinite(Number(prova.id))) continue;
+            const minha = await getMinhaRespostaRelacional(Number(prova.id), Number(user.id));
+            if (!minha) continue;
+            respostasLoaded.push({
+              id: String(minha.id ?? `${minha.provaId}-${minha.alunoId}`),
+              provaId: String(minha.provaId),
+              provaTitulo: minha.provaTitulo ?? prova.titulo,
+              alunoId: String(minha.alunoId),
+              alunoNome: minha.alunoNome ?? user.nome,
+              turma: minha.turma ?? prova.turma,
+              disciplina: minha.disciplina ?? prova.disciplina,
+              status:
+                minha.status === 'Corrigido' || (minha.notaFinal ?? null) !== null ? 'Corrigido' : 'Enviado',
+              respostas: (minha.respostas ?? []).map((i) => ({
+                questaoId: String(i.questaoId ?? ''),
+                tipo: i.tipo === 'aberta' ? 'aberta' : 'multipla',
+                alternativaIndex: i.alternativaIndex ?? null,
+                respostaTexto: i.respostaTexto ?? '',
+                pontosObtidos: i.pontosObtidos ?? null,
+              })),
+              pontosMaximos: minha.pontosMaximos ?? 0,
+              pontosObtidos: minha.pontosObtidos ?? 0,
+              notaFinal: minha.notaFinal ?? null,
+              enviadoEm: minha.enviadoEm ?? '',
+              corrigidoEm: typeof minha.corrigidoEm === 'string' ? minha.corrigidoEm : undefined,
+            });
+          }
+          setProvasList(provasMapped);
+          setRespostasRegistradas(respostasLoaded);
+        })
+        .catch(() => null);
+    }
+    if (isNotasRelacionalEnabled() && user?.id) {
+      void listNotasRelacionalPorAluno(user.id)
+        .then((rows) => {
+          const mapped: NotaAluno[] = rows.map((n, idx) => ({
+            id: `rel-${n.id ?? idx}`,
+            alunoId: String(n.alunoId ?? user.id),
+            alunoNome: n.alunoNome ?? user.nome ?? '',
+            turma: n.turmaNome ?? '',
+            disciplina: n.disciplinaNome ?? '',
+            bimestre: n.bimestre ?? '',
+            trabalhosNota: n.trabalhosNota ?? null,
+            provasNota: n.provasNota ?? null,
+            nota: n.nota ?? null,
+          }));
+          setNotasAlunos(mapped);
+        })
+        .catch(() => null);
+    }
+  }, [user?.id, user?.nome]);
 
   const alunoAtual = useMemo(
     () => usuarios.find((u) => u.id === user?.id) ?? null,
@@ -563,6 +753,32 @@ const AlunoDashboard: React.FC = () => {
         (item) => !(item.provaId === provaSelecionada.id && item.alunoId === user.id),
       ),
     ];
+    if (
+      isProvasRelacionalEnabled() &&
+      Number.isFinite(Number(provaSelecionada.id)) &&
+      Number.isFinite(Number(user.id))
+    ) {
+      void submitRespostaRelacional(
+        Number(provaSelecionada.id),
+        Number(user.id),
+        respostasFinal.map((r) => {
+          const questaoIdNum = Number(r.questaoId);
+          return {
+            questaoId: Number.isFinite(questaoIdNum) ? questaoIdNum : undefined,
+            tipo: r.tipo,
+            alternativaIndex: r.alternativaIndex ?? null,
+            respostaTexto: r.respostaTexto ?? '',
+          };
+        }),
+      ).catch(() => {
+        window.alert('Nao foi possivel enviar a prova. Verifique a API e tente novamente.');
+      });
+    }
+    if (isProvasRelacionalEnabled()) {
+      setRespostasRegistradas(updated);
+      setModoConsulta(true);
+      return;
+    }
     setRespostasRegistradas(updated);
     saveToStorage(respostasStorageKey, updated);
     setModoConsulta(true);

@@ -166,18 +166,7 @@ const Login: React.FC = () => {
             </Link>
           </p>
 
-          {/* Demo credentials */}
-          <div className="mt-8 p-4 bg-muted rounded-lg">
-            <p className="text-xs font-medium text-muted-foreground mb-2">
-              Credenciais para demonstração:
-            </p>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p><span className="font-medium">Admin:</span> CPF 111.111.111-11 / Senha admin@Classe360</p>
-              <p><span className="font-medium">Gestor:</span> 222.222.222-22 (qualquer senha)</p>
-              <p><span className="font-medium">Professor:</span> 333.333.333-33 (qualquer senha)</p>
-              <p><span className="font-medium">Aluno:</span> 444.444.444-44 (qualquer senha)</p>
-            </div>
-          </div>
+          {/* Credenciais definidas no backend */}
         </div>
       </div>
 

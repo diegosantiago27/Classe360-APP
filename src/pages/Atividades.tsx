@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, ClipboardList, MapPin, Pencil, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import {
   CatalogItem,
   defaultDisciplinas,
@@ -22,6 +22,20 @@ import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
 import { Link, useSearchParams } from 'react-router-dom';
+import {
+  deleteAtividadeApi,
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listPeriodosApi,
+  listTurmasApi,
+  listUsuariosApi,
+  saveAtividadeApi,
+  saveEntregaAtividadeApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 type AtividadeStatus = 'Pendente' | 'Entregue';
 type QuestionType = 'multipla' | 'aberta';
@@ -52,6 +66,29 @@ interface Atividade {
   questoes?: AtividadeQuestion[];
   status: AtividadeStatus;
 }
+
+interface AtividadeMeta {
+  descricao?: string;
+  periodo?: string;
+  sala?: string;
+  horario?: string;
+  instrucoes?: string;
+  status?: AtividadeStatus;
+  questoes?: AtividadeQuestion[];
+  professorId?: string;
+  professorNome?: string;
+}
+
+const parseAtividadeMeta = (value?: string): AtividadeMeta => {
+  if (!value?.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as AtividadeMeta;
+    if (parsed && typeof parsed === 'object') return parsed;
+    return {};
+  } catch {
+    return { descricao: value };
+  }
+};
 
 const storageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
@@ -92,7 +129,9 @@ interface AtividadeEntrega {
   nota?: number | null;
 }
 
-const defaultAtividades: Atividade[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+const defaultAtividades: Atividade[] = API_URL ? [] : [
   {
     id: 'ATV-001',
     titulo: 'Lista de exercicios - Funcoes',
@@ -175,11 +214,12 @@ const Atividades: React.FC = () => {
       .trim()
       .toUpperCase() === 'ROLE_PROFESSOR';
   const [atividades, setAtividades] = useState<Atividade[]>(
-    () => loadFromStorage<Atividade[]>(storageKey, defaultAtividades),
+    () => loadFromStorage<Atividade[]>(storageKey, isApiEnabled() ? [] : defaultAtividades),
   );
   const [entregas, setEntregas] = useState<AtividadeEntrega[]>(
     () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
   );
+  const [storageTick, setStorageTick] = useState(0);
   const [correcaoOpen, setCorrecaoOpen] = useState(false);
   const [entregaSelecionada, setEntregaSelecionada] = useState<AtividadeEntrega | null>(null);
   const [notaDraft, setNotaDraft] = useState<number>(0);
@@ -208,25 +248,154 @@ const Atividades: React.FC = () => {
     status: 'Pendente',
   });
   const [disciplinaSelecionada, setDisciplinaSelecionada] = useState(disciplinaInicial);
+
+  const refreshFromApi = () => {
+    if (!isApiEnabled()) return Promise.resolve();
+    return Promise.all([
+      listAtividadesApi(),
+      listEntregasAtividadesApi(),
+      listTurmasApi(),
+      listDisciplinasApi(),
+      listPeriodosApi(),
+      listUsuariosApi(),
+      loadVinculosDisciplinaTurma(),
+    ])
+      .then(
+        ([atividadesApi, entregasApi, turmasApi, disciplinasApi, periodosApi, usuariosApi, vincRows]) => {
+        const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          id: String(t.id ?? ''),
+          nome: t.nome ?? `Turma ${t.id ?? ''}`,
+          ...mapTurnoFieldsFromTurmaApi(t),
+          status: 'Ativa',
+          alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+          professor: '',
+          proximaAula: '',
+        }));
+        const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+          id: String(d.id ?? ''),
+          nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+        }));
+        const periodosMapped: CatalogItem[] = periodosApi.map((p) => ({
+          id: String(p.id ?? ''),
+          nome: p.nome ?? `Periodo ${p.id ?? ''}`,
+        }));
+        const usersMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: String(u.role ?? '').includes('PROFESSOR')
+            ? UserProfile.PROFESSOR
+            : String(u.role ?? '').includes('ADMIN')
+              ? UserProfile.ADMINISTRADOR
+              : String(u.role ?? '').includes('GESTOR')
+                ? UserProfile.GESTOR
+                : String(u.role ?? '').includes('SECRETARIA')
+                  ? UserProfile.SECRETARIA
+                  : UserProfile.ALUNO,
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          turmas: [],
+        }));
+
+        const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+        const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
+        const userNomeById = new Map(usersMapped.map((u) => [u.id, u.nome]));
+
+        const atividadesMapped: Atividade[] = atividadesApi.map((a) => {
+          const meta = parseAtividadeMeta(a.descricao ?? '');
+          return {
+            id: String(a.id ?? createId('atividade')),
+            titulo: a.titulo ?? '',
+            turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
+            disciplina:
+              disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
+            periodo: meta.periodo ?? '',
+            sala: meta.sala ?? '',
+            data: a.dataEntrega ?? '',
+            horario: meta.horario ?? '',
+            instrucoes: meta.instrucoes ?? '',
+            descricao: meta.descricao ?? '',
+            questoes: meta.questoes ?? [],
+            professorId: meta.professorId ?? '',
+            professorNome: meta.professorNome ?? '',
+            status: meta.status ?? 'Pendente',
+          };
+        });
+
+        const atividadeById = new Map(atividadesMapped.map((a) => [a.id, a]));
+        const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => {
+          const atividadeRef = atividadeById.get(String(e.atividadeId ?? ''));
+          return {
+            id: String(e.id ?? createId('entrega')),
+            atividadeId: String(e.atividadeId ?? ''),
+            alunoId: String(e.alunoId ?? ''),
+            alunoNome: userNomeById.get(String(e.alunoId ?? '')) ?? '',
+            disciplina: atividadeRef?.disciplina ?? '',
+            resposta: e.resposta ?? '',
+            enviadoEm: '',
+            nota: e.nota ?? null,
+          };
+        });
+
+        saveToStorage(turmasStorageKey, turmasMapped);
+        saveToStorage(disciplinasStorageKey, disciplinasMapped);
+        saveToStorage(periodosStorageKey, periodosMapped);
+        saveToStorage(usersStorageKey, usersMapped);
+        saveToStorage(storageKey, atividadesMapped);
+        saveToStorage(entregasStorageKey, entregasMapped);
+        saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculoAtividade[]);
+
+        setAtividades(atividadesMapped);
+        setEntregas(entregasMapped);
+        setStorageTick((prev) => prev + 1);
+      })
+      .catch(() => {
+        window.alert('Não foi possível carregar atividades. Verifique a API e tente novamente.');
+        setAtividades([]);
+        setEntregas([]);
+        setStorageTick((prev) => prev + 1);
+      });
+  };
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      void refreshFromApi();
+      return;
+    }
+    void syncKeysFromBackend([
+      storageKey,
+      entregasStorageKey,
+      vinculosStorageKey,
+      disciplinasStorageKey,
+      periodosStorageKey,
+      turmasStorageKey,
+      usersStorageKey,
+    ]).finally(() => {
+      setAtividades(loadFromStorage<Atividade[]>(storageKey, defaultAtividades));
+      setEntregas(loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []));
+      setStorageTick((prev) => prev + 1);
+    });
+  }, []);
+
   const disciplinasDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+    [storageTick],
   );
   const periodosDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
-    [],
+    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, isApiEnabled() ? [] : defaultPeriodos),
+    [storageTick],
   );
   const turmasDisponiveis = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-    [],
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
+    [storageTick],
   );
   const usuariosLista = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
-    [],
+    [storageTick],
   );
   const vinculosLista = useMemo(
     () => loadFromStorage<DisciplinaVinculoAtividade[]>(vinculosStorageKey, []),
-    [],
+    [storageTick],
   );
   const disciplinaOptions = useMemo(
     () => disciplinasDisponiveis.map((item) => item.nome),
@@ -348,6 +517,23 @@ const Atividades: React.FC = () => {
     );
     setEntregas(updated);
     saveToStorage(entregasStorageKey, updated);
+    if (isApiEnabled()) {
+      const entregaIdNum = Number(entregaSelecionada.id);
+      const atividadeIdNum = Number(entregaSelecionada.atividadeId);
+      const alunoIdNum = Number(entregaSelecionada.alunoId);
+      if (!Number.isFinite(atividadeIdNum) || !Number.isFinite(alunoIdNum)) {
+        setCorrecaoOpen(false);
+        return;
+      }
+      void saveEntregaAtividadeApi({
+        id: Number.isFinite(entregaIdNum) ? entregaIdNum : undefined,
+        atividadeId: atividadeIdNum,
+        alunoId: alunoIdNum,
+        resposta: entregaSelecionada.resposta,
+        nota: notaNormalizada,
+        corrigido: true,
+      }).catch(() => null);
+    }
     setCorrecaoOpen(false);
   };
 
@@ -547,6 +733,33 @@ const Atividades: React.FC = () => {
       (draft.questoes?.[0]?.enunciado?.trim() ?? '');
     const normalized = { ...draft, descricao: descricaoFinal };
 
+    if (isApiEnabled()) {
+      const turmaId = turmasDisponiveis.find((t) => t.nome === draft.turma)?.id;
+      const disciplinaId = disciplinasDisponiveis.find((d) => d.nome === draft.disciplina)?.id;
+      void saveAtividadeApi({
+        id: editingId ? Number(editingId) : undefined,
+        titulo: draft.titulo,
+        turmaId: turmaId ? Number(turmaId) : null,
+        disciplinaId: disciplinaId ? Number(disciplinaId) : null,
+        dataEntrega: draft.data,
+        descricao: JSON.stringify({
+          descricao: draft.descricao,
+          periodo: draft.periodo,
+          sala: draft.sala,
+          horario: draft.horario,
+          instrucoes: draft.instrucoes,
+          status: draft.status,
+          questoes: draft.questoes ?? [],
+          professorId: user?.id ?? '',
+          professorNome: user?.nome ?? '',
+        }),
+      })
+        .then(() => refreshFromApi())
+        .catch(() => null);
+      setDialogOpen(false);
+      return;
+    }
+
     if (editingId) {
       const updated = atividades.map((item) =>
         item.id === editingId ? { ...item, ...normalized } : item,
@@ -575,6 +788,12 @@ const Atividades: React.FC = () => {
       `Deseja remover a atividade "${atividade.titulo}"?`,
     );
     if (!confirmed) return;
+    if (isApiEnabled() && Number.isFinite(Number(atividade.id))) {
+      void deleteAtividadeApi(Number(atividade.id))
+        .then(() => refreshFromApi())
+        .catch(() => null);
+      return;
+    }
     const updated = atividades.filter((item) => item.id !== atividade.id);
     setAtividades(updated);
     saveToStorage(storageKey, updated);

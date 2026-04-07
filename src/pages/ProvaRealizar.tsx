@@ -110,12 +110,14 @@ export default function ProvaRealizar() {
 
   const [prova, setProva] = useState<Prova | null>(() => {
     if (!id) return null;
+    if (isProvasRelacionalEnabled()) return null;
     const provas = loadFromStorage<Prova[]>(provasStorageKey, []);
     return provas.find((item) => item.id === id) ?? null;
   });
 
   const [respostaExistente, setRespostaExistente] = useState<ProvaResposta | null>(() => {
     if (!user?.id || !id) return null;
+    if (isProvasRelacionalEnabled()) return null;
     const respostas = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
     return respostas.find((item) => item.provaId === id && item.alunoId === user.id) ?? null;
   });
@@ -133,8 +135,7 @@ export default function ProvaRealizar() {
           setProva({ ...mapRelApiToStorageShape(p), sala: '' } as Prova);
           return;
         }
-        const provasLocal = loadFromStorage<Prova[]>(provasStorageKey, []);
-        setProva(provasLocal.find((item) => item.id === id) ?? null);
+        setProva(null);
       });
       return;
     }
@@ -176,10 +177,8 @@ export default function ProvaRealizar() {
     if (isProvasRelacionalEnabled()) {
       void getMinhaRespostaRelacional(id, user.id).then((resp) => {
         if (!resp) {
-          const respostas = loadFromStorage<ProvaResposta[]>(respostasStorageKey, []);
-          setRespostaExistente(
-            respostas.find((item) => item.provaId === id && item.alunoId === user.id) ?? null,
-          );
+          // Em modo relacional, ausência no backend deve prevalecer para evitar dado fantasma local.
+          setRespostaExistente(null);
           return;
         }
         setRespostaExistente({
@@ -291,7 +290,8 @@ export default function ProvaRealizar() {
         setRespostaExistente(novoRegistro);
         salvoNoRelacional = true;
       } catch {
-        // fallback local
+        window.alert('Não foi possível enviar a prova. Verifique a API e tente novamente.');
+        return;
       }
     }
     if (!salvoNoRelacional) {
@@ -355,7 +355,9 @@ export default function ProvaRealizar() {
       return;
     }
 
-    const sessoes = loadFromStorage<ProvaSessao[]>(sessoesStorageKey, []);
+    const sessoes = isProvasRelacionalEnabled()
+      ? []
+      : loadFromStorage<ProvaSessao[]>(sessoesStorageKey, []);
     const sessaoId = `${prova.id}-${user.id}`;
     const existente = sessoes.find((item) => item.id === sessaoId) ?? null;
     const agora = Date.now();
@@ -371,7 +373,9 @@ export default function ProvaRealizar() {
         expiraEm: new Date(expiraEm).toISOString(),
       };
       const updated = [novaSessao, ...sessoes.filter((item) => item.id !== sessaoId)];
-      saveToStorage(sessoesStorageKey, updated);
+      if (!isProvasRelacionalEnabled()) {
+        saveToStorage(sessoesStorageKey, updated);
+      }
     }
 
     const tick = () => {

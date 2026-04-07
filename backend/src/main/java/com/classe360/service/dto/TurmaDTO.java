@@ -12,7 +12,9 @@ public class TurmaDTO {
 
     private Long id;
     private String nome;
-    private String turno;
+    private Long turnoId;
+    /** Preenchido na leitura; ignorado na persistência via MapStruct. */
+    private String turnoNome;
     private String status;
     private Long professorId;
     private Set<Long> alunosIds;

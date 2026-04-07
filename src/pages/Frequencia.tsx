@@ -7,10 +7,22 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { cn } from '@/lib/utils';
+import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
+import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listFrequenciasApi,
+  listTurmasApi,
+  listUsuariosApi,
+  saveFrequenciaApi,
+} from '@/lib/entityCrudApi';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 type PresencaStatus = 'Presente' | 'Falta';
 
@@ -47,7 +59,9 @@ interface DisciplinaVinculo {
   alunos: AlunoVinculado[];
 }
 
-const defaultAlunos: AlunoTurma[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+const defaultAlunos: AlunoTurma[] = API_URL ? [] : [
   { id: 'AL-9A-1', nome: 'Pedro Oliveira', turma: '9º Ano A' },
   { id: 'AL-9A-2', nome: 'Maria Souza', turma: '9º Ano A' },
   { id: 'AL-9B-1', nome: 'Joao Pedro', turma: '9º Ano B' },
@@ -87,13 +101,16 @@ const Frequencia: React.FC = () => {
     ?? (user as { perfil?: unknown; role?: unknown } | null)?.role;
   const somenteConsulta = isSecretariaPerfil(perfilAtual);
   const ehProfessor = isProfessorPerfil(perfilAtual);
-  const [usuarios] = useState<StoredUser[]>(() =>
-    loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+  const [usuarios, setUsuarios] = useState<StoredUser[]>(() =>
+    loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
   );
-  const [disciplinasCatalogo] = useState<CatalogItem[]>(() =>
-    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+  const [disciplinasCatalogo, setDisciplinasCatalogo] = useState<CatalogItem[]>(() =>
+    loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
-  const [vinculos] = useState<DisciplinaVinculo[]>(() =>
+  const [turmasCatalogo, setTurmasCatalogo] = useState<Turma[]>(() =>
+    loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
+  );
+  const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(() =>
     loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
   );
   const [presencas, setPresencas] = useState<RegistroPresenca[]>(() =>
@@ -102,6 +119,98 @@ const Frequencia: React.FC = () => {
   const [turmaSelecionada, setTurmaSelecionada] = useState('');
   const [disciplinaSelecionadaId, setDisciplinaSelecionadaId] = useState('');
   const [dataSelecionada, setDataSelecionada] = useState(new Date());
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      void Promise.all([
+        listUsuariosApi(),
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listFrequenciasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([usuariosApi, disciplinasApi, turmasApi, frequenciasApi, vincRows]) => {
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: String(u.role ?? '').includes('PROFESSOR')
+              ? UserProfile.PROFESSOR
+              : String(u.role ?? '').includes('ADMIN')
+                ? UserProfile.ADMINISTRADOR
+                : String(u.role ?? '').includes('GESTOR')
+                  ? UserProfile.GESTOR
+                  : String(u.role ?? '').includes('SECRETARIA')
+                    ? UserProfile.SECRETARIA
+                    : UserProfile.ALUNO,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: (t.status as Turma['status']) ?? 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: t.professorId ? String(t.professorId) : '',
+            proximaAula: '',
+          }));
+          const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+          const alunoNomeById = new Map(usuariosMapped.map((u) => [u.id, u.nome]));
+          const presencasMapped: RegistroPresenca[] = frequenciasApi.map((f) => ({
+            id: String(f.id ?? createId('presenca')),
+            turma: turmaNomeById.get(String(f.turmaId ?? '')) ?? '',
+            alunoId: String(f.alunoId ?? ''),
+            alunoNome: alunoNomeById.get(String(f.alunoId ?? '')) ?? '',
+            data: f.data ?? '',
+            status: f.presente ? 'Presente' : 'Falta',
+          }));
+
+          const usuariosComTurmas = mergeAlunosTurmasFromApi(usuariosMapped, turmasApi);
+          saveToStorage(usersStorageKey, usuariosComTurmas);
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(presencasStorageKey, presencasMapped);
+          saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculo[]);
+
+          setUsuarios(usuariosComTurmas);
+          setDisciplinasCatalogo(disciplinasMapped);
+          setTurmasCatalogo(turmasMapped);
+          setPresencas(presencasMapped);
+          setVinculos(vincRows as DisciplinaVinculo[]);
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar a frequência. Verifique a API e tente novamente.');
+          setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, []));
+          setDisciplinasCatalogo(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []));
+          setTurmasCatalogo(loadFromStorage<Turma[]>(turmasStorageKey, []));
+          setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+          setPresencas(loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []));
+        });
+      return;
+    }
+    void syncKeysFromBackend([
+      usersStorageKey,
+      disciplinasStorageKey,
+      turmasStorageKey,
+      vinculosStorageKey,
+      presencasStorageKey,
+      storageKey,
+    ]).finally(() => {
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
+      setDisciplinasCatalogo(
+        loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+      );
+      setTurmasCatalogo(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+      setPresencas(loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []));
+    });
+  }, []);
 
   const professorVinculos = useMemo(() => {
     if (!ehProfessor || !user) return [];
@@ -130,7 +239,10 @@ const Frequencia: React.FC = () => {
     const turmasAlunos = usuarios
       .filter((u) => u.perfil === UserProfile.ALUNO && u.status === 'ativo')
       .flatMap((u) => u.turmas ?? []);
-    const base = turmasAlunos.length > 0 ? turmasAlunos : defaultAlunos.map((item) => item.turma);
+    const base =
+      turmasAlunos.length > 0
+        ? turmasAlunos
+        : (isApiEnabled() ? [] : defaultAlunos.map((item) => item.turma));
     return Array.from(new Set(base)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [ehProfessor, professorVinculos, usuarios]);
 
@@ -230,6 +342,25 @@ const Frequencia: React.FC = () => {
         ];
     setPresencas(atualizado);
     saveToStorage(presencasStorageKey, atualizado);
+    const turmaId = turmasCatalogo.find((t) => t.nome === turmaSelecionada)?.id;
+    const disciplinaId = disciplinaSelecionadaId;
+    const alunoIdNum = Number(aluno.id);
+    if (
+      isApiEnabled() &&
+      turmaId &&
+      disciplinaId &&
+      Number.isFinite(alunoIdNum) &&
+      Number.isFinite(Number(turmaId)) &&
+      Number.isFinite(Number(disciplinaId))
+    ) {
+      void saveFrequenciaApi({
+        alunoId: alunoIdNum,
+        turmaId: Number(turmaId),
+        disciplinaId: Number(disciplinaId),
+        data: dataSelecionadaISO,
+        presente: status === 'Presente',
+      }).catch(() => null);
+    }
   };
 
   const handleSetAll = (status: PresencaStatus) => {
@@ -262,6 +393,27 @@ const Frequencia: React.FC = () => {
     const normalized = Array.from(new Map(atualizado.map((item) => [item.id, item])).values());
     setPresencas(normalized);
     saveToStorage(presencasStorageKey, normalized);
+    const turmaId = turmasCatalogo.find((t) => t.nome === turmaSelecionada)?.id;
+    const disciplinaId = disciplinaSelecionadaId;
+    if (
+      isApiEnabled() &&
+      turmaId &&
+      disciplinaId &&
+      Number.isFinite(Number(turmaId)) &&
+      Number.isFinite(Number(disciplinaId))
+    ) {
+      alunosDaTurma.forEach((aluno) => {
+        const alunoIdNum = Number(aluno.id);
+        if (!Number.isFinite(alunoIdNum)) return;
+        void saveFrequenciaApi({
+          alunoId: alunoIdNum,
+          turmaId: Number(turmaId),
+          disciplinaId: Number(disciplinaId),
+          data: dataSelecionadaISO,
+          presente: status === 'Presente',
+        }).catch(() => null);
+      });
+    }
   };
 
   const totalPresentes = alunosDaTurma.filter(

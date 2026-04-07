@@ -20,6 +20,15 @@ import {
   patchCorrecaoRespostaRelacional,
   type ProvaRespostaApi,
 } from '@/lib/provasRelApi';
+import {
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listTurmasApi,
+  listUsuariosApi,
+  saveEntregaAtividadeApi,
+} from '@/lib/entityCrudApi';
 
 const atividadesStorageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
@@ -177,16 +186,17 @@ export default function CorrecoesDetalhe() {
   }, [state]);
 
   const usuarios = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
-    [],
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
+    [storageTick],
   );
   const atividades = useMemo(
     () => loadFromStorage<Atividade[]>(atividadesStorageKey, []),
-    [],
+    [storageTick],
   );
   const [entregas, setEntregas] = useState<AtividadeEntrega[]>(
     () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
   );
+  const [storageTick, setStorageTick] = useState(0);
   const [avaliacoesDraft, setAvaliacoesDraft] = useState<
     Record<string, { nota: string; feedback: string }>
   >({});
@@ -195,6 +205,51 @@ export default function CorrecoesDetalhe() {
   const [respostaAlvo, setRespostaAlvo] = useState<ProvaRespostaCor | null>(null);
   const [carregandoProva, setCarregandoProva] = useState(false);
   const [draftProva, setDraftProva] = useState({ nota: '', feedback: '' });
+
+  useEffect(() => {
+    if (!isApiEnabled()) return;
+    void Promise.all([
+      listUsuariosApi(),
+      listDisciplinasApi(),
+      listTurmasApi(),
+      listAtividadesApi(),
+      listEntregasAtividadesApi(),
+    ])
+      .then(([usuariosApi, disciplinasApi, turmasApi, atividadesApi, entregasApi]) => {
+        const usuarioNomeById = new Map(usuariosApi.map((u) => [String(u.id ?? ''), u.nome ?? '']));
+        const turmaNomeById = new Map(
+          turmasApi.map((t) => [String(t.id ?? ''), t.nome ?? `Turma ${t.id ?? ''}`]),
+        );
+        const disciplinaNomeById = new Map(
+          disciplinasApi.map((d) => [String(d.id ?? ''), d.nome ?? `Disciplina ${d.id ?? ''}`]),
+        );
+
+        const atividadesMapped: Atividade[] = atividadesApi.map((a) => ({
+          id: String(a.id ?? ''),
+          titulo: a.titulo ?? '',
+          turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
+          disciplina:
+            disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
+          turno: '',
+          questoes: [],
+        }));
+        const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => ({
+          id: String(e.id ?? ''),
+          atividadeId: String(e.atividadeId ?? ''),
+          alunoId: String(e.alunoId ?? ''),
+          alunoNome: usuarioNomeById.get(String(e.alunoId ?? '')) ?? '',
+          resposta: e.resposta ?? '',
+          enviadoEm: '',
+          nota: e.nota ?? null,
+          corrigidoEm: e.corrigido ? new Date().toISOString() : undefined,
+        }));
+
+        saveToStorage(atividadesStorageKey, atividadesMapped);
+        saveToStorage(entregasStorageKey, entregasMapped);
+      })
+      .catch(() => null)
+      .finally(() => setStorageTick((p) => p + 1));
+  }, []);
 
   const alunosIdsSelecionados = state?.alunosIds ?? [];
   const turmaFiltroKey = getTurmaKey(state?.turma ?? '');
@@ -241,6 +296,11 @@ export default function CorrecoesDetalhe() {
     turnoFiltro,
     alunosIdsSelecionados,
   ]);
+
+  useEffect(() => {
+    if (!storageTick) return;
+    setEntregas(loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []));
+  }, [storageTick]);
 
   useEffect(() => {
     setAvaliacoesDraft((prev) => {
@@ -382,6 +442,10 @@ export default function CorrecoesDetalhe() {
       }
     }
 
+    if (isApiEnabled()) {
+      window.alert('Não foi possível salvar a correção. Verifique a API e tente novamente.');
+      return;
+    }
     const stored = loadFromStorage<ProvaRespostaCor[]>(provasRespostasStorageKey, []);
     const idx = stored.findIndex((r) => r.provaId === provaAlvo.id && r.alunoId === respostaAlvo.alunoId);
     if (idx < 0) {
@@ -436,6 +500,23 @@ export default function CorrecoesDetalhe() {
         : item,
     );
     setEntregas(updated);
+    if (isApiEnabled()) {
+      const entrega = updated.find((e) => e.id === entregaId);
+      const entregaIdNum = Number(entregaId);
+      const atividadeIdNum = Number(entrega?.atividadeId);
+      const alunoIdNum = Number(entrega?.alunoId);
+      if (entrega && Number.isFinite(atividadeIdNum) && Number.isFinite(alunoIdNum)) {
+        void saveEntregaAtividadeApi({
+          id: Number.isFinite(entregaIdNum) ? entregaIdNum : undefined,
+          atividadeId: atividadeIdNum,
+          alunoId: alunoIdNum,
+          resposta: entrega.resposta ?? '',
+          nota: notaNumber,
+          corrigido: true,
+        }).catch(() => null);
+      }
+      return;
+    }
     saveToStorage(entregasStorageKey, updated);
   };
 

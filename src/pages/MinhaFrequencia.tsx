@@ -1,12 +1,21 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, UserCheck } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { loadFromStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
+import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listFrequenciasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface FrequenciaItem {
   id: string;
@@ -57,21 +66,82 @@ const getTurmaKey = (value?: string) => {
 
 const MinhaFrequencia: React.FC = () => {
   const { user } = useAuth();
+  const [storageTick, setStorageTick] = useState(0);
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      void Promise.all([
+        listUsuariosApi(),
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listFrequenciasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([usuariosApi, disciplinasApi, turmasApi, frequenciasApi, vincRows]) => {
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: String(u.role ?? '').includes('PROFESSOR')
+              ? 3
+              : String(u.role ?? '').includes('ADMIN')
+                ? 2
+                : String(u.role ?? '').includes('GESTOR')
+                  ? 1
+                  : String(u.role ?? '').includes('SECRETARIA')
+                    ? 5
+                    : 4,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmaNomeById = new Map(
+            turmasApi.map((t) => [String(t.id ?? ''), t.nome ?? `Turma ${t.id ?? ''}`]),
+          );
+          const alunoNomeById = new Map(usuariosMapped.map((u) => [u.id, u.nome]));
+          const presencasMapped: RegistroPresenca[] = frequenciasApi.map((f) => ({
+            id: String(f.id ?? ''),
+            turma: turmaNomeById.get(String(f.turmaId ?? '')) ?? `Turma ${f.turmaId ?? ''}`,
+            alunoId: String(f.alunoId ?? ''),
+            alunoNome: alunoNomeById.get(String(f.alunoId ?? '')) ?? '',
+            data: f.data ?? '',
+            status: f.presente ? 'Presente' : 'Falta',
+          }));
+          const usuariosComTurmas = mergeAlunosTurmasFromApi(usuariosMapped, turmasApi);
+          saveToStorage(usersStorageKey, usuariosComTurmas);
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(presencasStorageKey, presencasMapped);
+          saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculo[]);
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar sua frequência. Verifique a API e tente novamente.');
+        })
+        .finally(() => setStorageTick((prev) => prev + 1));
+      return;
+    }
+    void syncKeysFromBackend([usersStorageKey, disciplinasStorageKey, vinculosStorageKey, presencasStorageKey])
+      .finally(() => setStorageTick((prev) => prev + 1));
+  }, []);
+
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
-    [],
+    [storageTick],
   );
   const disciplinas = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
-    [],
+    [storageTick],
   );
   const vinculos = useMemo(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
-    [],
+    [storageTick],
   );
   const presencas = useMemo(
     () => loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
-    [],
+    [storageTick],
   );
   const alunoAtual = useMemo(
     () => usuarios.find((u) => u.id === user?.id && u.perfil === UserProfile.ALUNO) ?? null,

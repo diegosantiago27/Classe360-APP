@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import StatCard from '@/components/common/StatCard';
@@ -19,7 +19,14 @@ import {
   Plus,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { isApiEnabled, listAvisosApi } from '@/lib/entityCrudApi';
+import {
+  isProvasRelacionalEnabled,
+  listProvasRelacionalParaProfessor,
+  listRespostasRelacionalParaProfessor,
+  patchCorrecaoRespostaRelacional,
+} from '@/lib/provasRelApi';
 
 interface ProvaQuestion {
   id: string;
@@ -64,27 +71,95 @@ interface ProvaResposta {
   corrigidoEm?: string;
 }
 
-interface NotaAluno {
-  id: string;
-  alunoId?: string;
-  disciplina: string;
-  media: number;
-  situacao: 'Aprovado' | 'Recuperacao' | 'Reprovado';
-  ultimaNota: string;
-}
-
 const provasStorageKey = 'school-compass:provas';
 const respostasStorageKey = 'school-compass:provas-respostas';
-const minhasNotasStorageKey = 'school-compass:minhas-notas';
+const avisosStorageKey = 'school-compass:avisos';
 
 const ProfessorDashboard: React.FC = () => {
   const { user } = useAuth();
-  const [provas] = useState<ProvaResumo[]>(
-    () => loadFromStorage<ProvaResumo[]>(provasStorageKey, []),
+  const [provas, setProvas] = useState<ProvaResumo[]>(
+    () => (isProvasRelacionalEnabled() ? [] : loadFromStorage<ProvaResumo[]>(provasStorageKey, [])),
   );
   const [respostas, setRespostas] = useState<ProvaResposta[]>(
-    () => loadFromStorage<ProvaResposta[]>(respostasStorageKey, []),
+    () => (isProvasRelacionalEnabled() ? [] : loadFromStorage<ProvaResposta[]>(respostasStorageKey, [])),
   );
+  const [avisosRecentes, setAvisosRecentes] = useState<Array<{ titulo: string; data: string; urgente: boolean }>>(
+    () =>
+      loadFromStorage<Array<{ titulo: string; data: string; urgente: boolean }>>(avisosStorageKey, []).slice(0, 3),
+  );
+  useEffect(() => {
+    const usarStorageProvas =
+      !isProvasRelacionalEnabled() || !user?.id || !Number.isFinite(Number(user.id));
+    if (usarStorageProvas) {
+      void syncKeysFromBackend([provasStorageKey, respostasStorageKey]).finally(() => {
+        setProvas(loadFromStorage<ProvaResumo[]>(provasStorageKey, []));
+        setRespostas(loadFromStorage<ProvaResposta[]>(respostasStorageKey, []));
+      });
+    }
+    if (isApiEnabled()) {
+      void listAvisosApi()
+        .then((items) => {
+          const mapped = items
+            .map((a) => ({
+              titulo: a.titulo ?? '',
+              data: a.dataCriacao ? new Date(a.dataCriacao).toLocaleDateString('pt-BR') : '',
+              urgente: (a.conteudo ?? '').includes('[NIVEL:Urgente]'),
+            }))
+            .slice(0, 3);
+          setAvisosRecentes(mapped);
+        })
+        .catch(() => null);
+    }
+    if (isProvasRelacionalEnabled() && user?.id && Number.isFinite(Number(user.id))) {
+      void Promise.all([
+        listProvasRelacionalParaProfessor(user.id),
+        listRespostasRelacionalParaProfessor(user.id),
+      ])
+        .then(([provasRel, respostasRel]) => {
+          const provasMapeadas: ProvaResumo[] = provasRel.map((p) => ({
+            id: String(p.id ?? ''),
+            titulo: p.titulo,
+            turma: p.turmaNome ?? '',
+            disciplina: p.disciplinaNome ?? '',
+            status: (p.status as ProvaResumo['status']) ?? 'Agendada',
+            questoes: (p.questoes ?? []).map((q, idx) => ({
+              id: String(q.id ?? `q-${idx}`),
+              enunciado: q.enunciado,
+              tipo: q.tipo === 'aberta' ? 'aberta' : 'multipla',
+              pontos: q.pontos ?? 0,
+              opcoes: q.opcoes ?? [],
+              corretaIndex: q.corretaIndex ?? null,
+            })),
+          }));
+          const respostasMapeadas: ProvaResposta[] = respostasRel.map((r) => ({
+            id: String(r.id ?? `${r.provaId}-${r.alunoId}`),
+            provaId: String(r.provaId),
+            provaTitulo: r.provaTitulo ?? '',
+            alunoId: String(r.alunoId),
+            alunoNome: r.alunoNome ?? '',
+            turma: r.turma ?? '',
+            disciplina: r.disciplina ?? '',
+            status:
+              r.status === 'Corrigido' || (r.notaFinal ?? null) !== null ? 'Corrigido' : 'Enviado',
+            respostas: (r.respostas ?? []).map((i) => ({
+              questaoId: String(i.questaoId ?? ''),
+              tipo: i.tipo === 'aberta' ? 'aberta' : 'multipla',
+              alternativaIndex: i.alternativaIndex ?? null,
+              respostaTexto: i.respostaTexto ?? '',
+              pontosObtidos: i.pontosObtidos ?? null,
+            })),
+            pontosMaximos: r.pontosMaximos ?? 0,
+            pontosObtidos: r.pontosObtidos ?? 0,
+            notaFinal: r.notaFinal ?? null,
+            enviadoEm: r.enviadoEm ?? '',
+            corrigidoEm: typeof r.corrigidoEm === 'string' ? r.corrigidoEm : undefined,
+          }));
+          setProvas(provasMapeadas);
+          setRespostas(respostasMapeadas);
+        })
+        .catch(() => null);
+    }
+  }, [user?.id]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [respostaSelecionada, setRespostaSelecionada] = useState<ProvaResposta | null>(null);
   const [correcaoDraft, setCorrecaoDraft] = useState<Record<string, number>>({});
@@ -169,55 +244,58 @@ const ProfessorDashboard: React.FC = () => {
       item.id === respostaSelecionada.id ? updatedResposta : item,
     );
     setRespostas(updatedRespostas);
-    saveToStorage(respostasStorageKey, updatedRespostas);
+    if (!isProvasRelacionalEnabled()) {
+      saveToStorage(respostasStorageKey, updatedRespostas);
+    }
+    if (
+      isProvasRelacionalEnabled() &&
+      Number.isFinite(Number(respostaSelecionada.provaId)) &&
+      Number.isFinite(Number(respostaSelecionada.alunoId)) &&
+      Number.isFinite(Number(user?.id))
+    ) {
+      void patchCorrecaoRespostaRelacional(
+        Number(respostaSelecionada.provaId),
+        Number(respostaSelecionada.alunoId),
+        Number(user?.id),
+        notaFinal,
+      ).catch(() => null);
+      setDialogOpen(false);
+      return;
+    }
 
-    const boletim = loadFromStorage<NotaAluno[]>(minhasNotasStorageKey, []);
-    const disciplina = prova?.disciplina ?? respostaSelecionada.disciplina;
-    const ultimaNota = `${respostaSelecionada.provaTitulo}: ${notaFinal.toFixed(1)}`;
-    const situacao =
-      notaFinal >= 7 ? 'Aprovado' : notaFinal >= 5 ? 'Recuperacao' : 'Reprovado';
-    const existente = boletim.find(
-      (item) => item.alunoId === respostaSelecionada.alunoId && item.disciplina === disciplina,
-    );
-    const updatedBoletim = existente
-      ? boletim.map((item) =>
-          item.id === existente.id
-            ? { ...item, media: notaFinal, situacao, ultimaNota }
-            : item,
-        )
-      : [
-          {
-            id: createId('nota-aluno'),
-            alunoId: respostaSelecionada.alunoId,
-            disciplina,
-            media: notaFinal,
-            situacao,
-            ultimaNota,
-          },
-          ...boletim,
-        ];
-    saveToStorage(minhasNotasStorageKey, updatedBoletim);
     setDialogOpen(false);
   };
 
-  const turmas = [
-    { id: '1', nome: '9º Ano A', materia: 'Matemática', alunos: 32, horario: '07:30 - 08:20' },
-    { id: '2', nome: '9º Ano B', materia: 'Matemática', alunos: 30, horario: '08:20 - 09:10' },
-    { id: '3', nome: '8º Ano A', materia: 'Física', alunos: 28, horario: '09:30 - 10:20' },
-    { id: '4', nome: '8º Ano B', materia: 'Física', alunos: 31, horario: '10:20 - 11:10' },
-  ];
-
-  const aulasHoje = [
-    { turma: '9º Ano A', materia: 'Matemática', horario: '07:30 - 08:20', sala: 'Sala 12' },
-    { turma: '9º Ano B', materia: 'Matemática', horario: '08:20 - 09:10', sala: 'Sala 12' },
-    { turma: '8º Ano A', materia: 'Física', horario: '09:30 - 10:20', sala: 'Lab. Física' },
-  ];
-
-  const avisosRecentes = [
-    { titulo: 'Reunião pedagógica', data: '20/01', urgente: true },
-    { titulo: 'Entrega de notas do 4º bimestre', data: '22/01', urgente: true },
-    { titulo: 'Capacitação docente', data: '28/01', urgente: false },
-  ];
+  const turmas = useMemo(
+    () =>
+      Array.from(new Set(respostas.map((r) => r.turma)))
+        .filter(Boolean)
+        .map((nome, idx) => ({
+          id: String(idx + 1),
+          nome,
+          materia: respostas.find((r) => r.turma === nome)?.disciplina ?? '-',
+          alunos: new Set(respostas.filter((r) => r.turma === nome).map((r) => r.alunoId)).size,
+          horario: '--:-- - --:--',
+        })),
+    [respostas],
+  );
+  const totalAlunosUnicos = useMemo(
+    () => new Set(respostas.map((r) => r.alunoId).filter(Boolean)).size,
+    [respostas],
+  );
+  const aulasHoje = useMemo(
+    () =>
+      provas
+        .filter((p) => p.status === 'Agendada')
+        .slice(0, 3)
+        .map((p) => ({
+          turma: p.turma ?? '-',
+          materia: p.disciplina ?? '-',
+          horario: '--:-- - --:--',
+          sala: 'Sala',
+        })),
+    [provas],
+  );
 
   return (
     <DashboardLayout>
@@ -246,14 +324,14 @@ const ProfessorDashboard: React.FC = () => {
           <StatCard
             icon={BookOpen}
             title="Minhas Turmas"
-            value="6"
+            value={String(turmas.length)}
             variant="primary"
             delay={0}
           />
           <StatCard
             icon={Users}
             title="Total de Alunos"
-            value="180"
+            value={String(totalAlunosUnicos)}
             variant="accent"
             delay={100}
           />

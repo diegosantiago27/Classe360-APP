@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { getPreferenciasApi, isApiEnabled, savePreferenciasApi } from '@/lib/entityCrudApi';
 
 interface Preferencias {
   notificacoes: boolean;
@@ -25,22 +26,68 @@ const Configuracoes: React.FC = () => {
   const [duploFator, setDuploFator] = useState(false);
 
   useEffect(() => {
-    const stored = loadFromStorage<Preferencias | null>(storageKey, null);
-    if (!stored) return;
-    setNotificacoes(stored.notificacoes);
-    setEmails(stored.emails);
-    setModoEscuro(stored.modoEscuro);
-    setDuploFator(stored.duploFator);
+    if (isApiEnabled()) {
+      void getPreferenciasApi()
+        .then((row) => {
+          const mapped: Preferencias = {
+            notificacoes: row.notificacoes ?? true,
+            emails: row.emails ?? true,
+            modoEscuro: row.modoEscuro ?? false,
+            duploFator: row.duploFator ?? false,
+          };
+          setNotificacoes(mapped.notificacoes);
+          setEmails(mapped.emails);
+          setModoEscuro(mapped.modoEscuro);
+          setDuploFator(mapped.duploFator);
+          saveToStorage(storageKey, mapped);
+        })
+        .catch(() => {
+          toast({
+            title: 'Erro ao carregar',
+            description: 'Nao foi possivel carregar preferencias do servidor.',
+            variant: 'destructive',
+          });
+        });
+      return;
+    }
+    void syncKeysFromBackend([storageKey]).finally(() => {
+      const stored = loadFromStorage<Preferencias | null>(storageKey, null);
+      if (!stored) return;
+      setNotificacoes(stored.notificacoes);
+      setEmails(stored.emails);
+      setModoEscuro(stored.modoEscuro);
+      setDuploFator(stored.duploFator);
+    });
   }, []);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    saveToStorage<Preferencias>(storageKey, {
+    const payload: Preferencias = {
       notificacoes,
       emails,
       modoEscuro,
       duploFator,
-    });
+    };
+    if (isApiEnabled()) {
+      try {
+        const saved = await savePreferenciasApi(payload);
+        saveToStorage<Preferencias>(storageKey, {
+          notificacoes: saved.notificacoes ?? notificacoes,
+          emails: saved.emails ?? emails,
+          modoEscuro: saved.modoEscuro ?? modoEscuro,
+          duploFator: saved.duploFator ?? duploFator,
+        });
+      } catch {
+        toast({
+          title: 'Erro ao salvar',
+          description: 'Nao foi possivel salvar as preferencias no servidor.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    } else {
+      saveToStorage<Preferencias>(storageKey, payload);
+    }
     toast({
       title: 'Configuracoes salvas',
       description: 'Suas preferencias foram atualizadas.',
@@ -58,7 +105,17 @@ const Configuracoes: React.FC = () => {
     setEmails(defaults.emails);
     setModoEscuro(defaults.modoEscuro);
     setDuploFator(defaults.duploFator);
-    saveToStorage(storageKey, defaults);
+    if (isApiEnabled()) {
+      void savePreferenciasApi(defaults).catch(() => {
+        toast({
+          title: 'Erro ao restaurar',
+          description: 'Nao foi possivel restaurar as preferencias no servidor.',
+          variant: 'destructive',
+        });
+      });
+    } else {
+      saveToStorage(storageKey, defaults);
+    }
     toast({
       title: 'Preferencias restauradas',
       description: 'As configuracoes voltaram ao padrao.',

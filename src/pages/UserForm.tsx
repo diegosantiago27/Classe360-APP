@@ -16,16 +16,15 @@ import { ArrowLeft, Save, Loader2, UserPlus } from 'lucide-react';
 import { UserProfile } from '@/types/auth';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
-import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import { loadFromStorage } from '@/lib/mockStorage';
+import { defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import {
   CatalogItem,
   defaultDisciplinas,
   disciplinasStorageKey,
 } from '@/lib/mockAcademics';
-
-const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+import { getUsuarioApi, isApiEnabled, saveUsuarioApi } from '@/lib/entityCrudApi';
 
 function roleToPerfil(role: string): UserProfile {
   switch (role) {
@@ -36,6 +35,22 @@ function roleToPerfil(role: string): UserProfile {
     case 'ROLE_PROFESSOR': return UserProfile.PROFESSOR;
     case 'ROLE_ALUNO':
     default: return UserProfile.ALUNO;
+  }
+}
+
+function perfilToRole(perfil: UserProfile): string {
+  switch (perfil) {
+    case UserProfile.GESTOR:
+      return 'ROLE_GESTOR';
+    case UserProfile.ADMINISTRADOR:
+      return 'ROLE_ADMIN';
+    case UserProfile.SECRETARIA:
+      return 'ROLE_SECRETARIA';
+    case UserProfile.PROFESSOR:
+      return 'ROLE_PROFESSOR';
+    case UserProfile.ALUNO:
+    default:
+      return 'ROLE_ALUNO';
   }
 }
 
@@ -70,15 +85,15 @@ const UserForm: React.FC = () => {
   });
 
   const currentUsers = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
     [],
   );
   const turmasCadastradas = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
     [],
   );
   const disciplinasCadastradas = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
     [],
   );
 
@@ -89,47 +104,52 @@ const UserForm: React.FC = () => {
     }
     if (!editingId) return;
 
-    const foundUser = currentUsers.find((item) => item.id === editingId);
-    if (foundUser) {
-      setFormData((prev) => ({
-        ...prev,
-        cpf: foundUser.cpf ?? '',
-        nome: foundUser.nome ?? '',
-        email: foundUser.email ?? '',
-        telefone: foundUser.telefone ?? '',
-        dataNascimento: foundUser.dataNascimento ?? '',
-        perfil: String(foundUser.perfil ?? ''),
-        turno: foundUser.turno ?? '',
-        status: foundUser.status ?? 'ativo',
-        endereco: foundUser.endereco ?? '',
-        cidade: foundUser.cidade ?? '',
-        estado: foundUser.estado ?? '',
-        cep: foundUser.cep ?? '',
-        materias: foundUser.materias ?? [],
-        turmas: foundUser.turmas ?? [],
-      }));
-      return;
-    }
-
-    if (API_URL) {
-      const token = localStorage.getItem('token');
-      fetch(`${API_URL}/api/usuarios/${editingId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data: { cpf?: string; nome?: string; email?: string; role?: string; ativo?: boolean } | null) => {
-          if (!data) return;
+    if (isApiEnabled() && Number.isFinite(Number(editingId))) {
+      void getUsuarioApi(Number(editingId))
+        .then((data) => {
           setFormData((prev) => ({
             ...prev,
             cpf: data.cpf ?? '',
             nome: data.nome ?? '',
             email: data.email ?? '',
+            telefone: data.telefone ?? '',
+            dataNascimento: data.dataNascimento ?? '',
             perfil: String(roleToPerfil(data.role ?? 'ROLE_ALUNO')),
-            status: data.ativo ? 'ativo' : 'inativo',
+            turno: (data.turno as '' | 'Manha' | 'Tarde' | 'Noite' | undefined) ?? '',
+            status: data.ativo === false ? 'inativo' : 'ativo',
+            endereco: data.endereco ?? '',
+            cidade: data.cidade ?? '',
+            estado: data.estado ?? '',
+            cep: data.cep ?? '',
+            materias: data.materias ?? [],
+            turmas: data.turmas ?? [],
           }));
         })
-        .catch(() => {});
+        .catch(() => {
+          window.alert('Não foi possível carregar o usuário. Verifique a API e tente novamente.');
+        });
+      return;
     }
+
+    const foundUser = currentUsers.find((item) => item.id === editingId);
+    if (!foundUser) return;
+    setFormData((prev) => ({
+      ...prev,
+      cpf: foundUser.cpf ?? '',
+      nome: foundUser.nome ?? '',
+      email: foundUser.email ?? '',
+      telefone: foundUser.telefone ?? '',
+      dataNascimento: foundUser.dataNascimento ?? '',
+      perfil: String(foundUser.perfil ?? ''),
+      turno: foundUser.turno ?? '',
+      status: foundUser.status ?? 'ativo',
+      endereco: foundUser.endereco ?? '',
+      cidade: foundUser.cidade ?? '',
+      estado: foundUser.estado ?? '',
+      cep: foundUser.cep ?? '',
+      materias: foundUser.materias ?? [],
+      turmas: foundUser.turmas ?? [],
+    }));
   }, [editingId, currentUsers, somenteConsulta, navigate]);
 
   const formatCpf = (value: string) => {
@@ -201,6 +221,14 @@ const UserForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (somenteConsulta) return;
+    if (!isApiEnabled()) {
+      toast({
+        title: 'Backend não configurado',
+        description: 'Configure o backend para salvar usuários.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     if (!isEditing && !validatePassword(formData.senha)) {
       toast({
@@ -223,54 +251,35 @@ const UserForm: React.FC = () => {
 
     setIsLoading(true);
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    const stored = loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers);
     const perfilNumerico = Number(formData.perfil) as UserProfile;
 
-    if (isEditing && editingId) {
-      const updated = stored.map((u) =>
-        u.id === editingId
-          ? {
-              ...u,
-              cpf: formData.cpf,
-              nome: formData.nome,
-              email: formData.email,
-              telefone: formData.telefone,
-              dataNascimento: formData.dataNascimento,
-              perfil: perfilNumerico,
-              turno: formData.turno || undefined,
-              status: formData.status,
-              endereco: formData.endereco,
-              cidade: formData.cidade,
-              estado: formData.estado,
-              cep: formData.cep,
-              materias: formData.materias,
-              turmas: formData.turmas,
-            }
-          : u,
-      );
-      saveToStorage(usersStorageKey, updated);
-    } else {
-      const newUser: StoredUser = {
-        id: createId('user'),
+    try {
+      await saveUsuarioApi({
+        id: isEditing && editingId && Number.isFinite(Number(editingId)) ? Number(editingId) : undefined,
         cpf: formData.cpf,
         nome: formData.nome,
         email: formData.email,
-        telefone: formData.telefone,
-        dataNascimento: formData.dataNascimento,
-        perfil: perfilNumerico,
+        role: perfilToRole(perfilNumerico),
+        ativo: formData.status === 'ativo',
+        telefone: formData.telefone || undefined,
+        dataNascimento: formData.dataNascimento || undefined,
+        endereco: formData.endereco || undefined,
+        cidade: formData.cidade || undefined,
+        estado: formData.estado || undefined,
+        cep: formData.cep || undefined,
         turno: formData.turno || undefined,
-        endereco: formData.endereco,
-        cidade: formData.cidade,
-        estado: formData.estado,
-        cep: formData.cep,
         materias: formData.materias,
         turmas: formData.turmas,
-        status: 'ativo',
-      };
-      saveToStorage(usersStorageKey, [newUser, ...stored]);
+        senha: formData.senha || undefined,
+      });
+    } catch {
+      toast({
+        title: 'Erro',
+        description: 'Nao foi possivel salvar o usuario.',
+        variant: 'destructive',
+      });
+      setIsLoading(false);
+      return;
     }
 
     toast({

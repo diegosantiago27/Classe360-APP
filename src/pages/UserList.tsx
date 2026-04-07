@@ -33,8 +33,7 @@ import { cn } from '@/lib/utils';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { defaultUsers, usersStorageKey, StoredUser } from '@/lib/mockUsers';
 import { Loader2 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+import { deleteUsuarioApi, isApiEnabled, listUsuariosApi } from '@/lib/entityCrudApi';
 
 function roleToPerfil(role: string): UserProfile {
   switch (role) {
@@ -53,58 +52,51 @@ function roleToPerfil(role: string): UserProfile {
   }
 }
 
-interface UsuarioApi {
-  id: number;
-  cpf: string;
-  nome: string;
-  email: string;
-  role: string;
-  ativo: boolean;
-}
-
 const UserList: React.FC = () => {
   const { user } = useAuth();
   const podeDeletar = user?.perfil !== UserProfile.GESTOR && user?.perfil !== UserProfile.SECRETARIA;
-  const [users, setUsers] = useState<StoredUser[]>(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
-  );
-  const [loading, setLoading] = useState(!!API_URL);
+  const [users, setUsers] = useState<StoredUser[]>([]);
+  const [loading, setLoading] = useState(isApiEnabled());
   const [searchTerm, setSearchTerm] = useState('');
   const [profileFilter, setProfileFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
   useEffect(() => {
-    if (!API_URL) return;
+    if (!isApiEnabled()) {
+      setUsers(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
+      return;
+    }
     let cancelled = false;
     setLoading(true);
-    const token = localStorage.getItem('token');
-    fetch(`${API_URL}/api/usuarios?size=500`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const content = (data.content ?? data) as UsuarioApi[];
+    void listUsuariosApi()
+      .then((content) => {
+        if (cancelled) return;
         const mapped: StoredUser[] = content.map((u) => ({
-          id: String(u.id),
+          id: String(u.id ?? ''),
           cpf: u.cpf ?? '',
           nome: u.nome ?? '',
           email: u.email ?? '',
           perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
-          turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
+          turno: u.turno as StoredUser['turno'] | undefined,
           status: u.ativo ? 'ativo' : 'inativo',
         }));
         setUsers(mapped);
+        saveToStorage(usersStorageKey, mapped);
       })
-      .catch(() => !cancelled && setUsers([]))
+      .catch(() => {
+        if (!cancelled) {
+          window.alert('Não foi possível carregar usuários. Verifique a API e tente novamente.');
+          setUsers([]);
+        }
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [API_URL]);
+  }, []);
 
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {
@@ -146,18 +138,18 @@ const UserList: React.FC = () => {
       `Deseja remover o usuário ${userToDelete.nome}?`,
     );
     if (!confirmed) return;
-    if (API_URL) {
+    if (isApiEnabled()) {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/api/usuarios/${userToDelete.id}`, {
-          method: 'DELETE',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (res.ok) {
-          setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
+        const idNum = Number(userToDelete.id);
+        if (Number.isFinite(idNum)) {
+          await deleteUsuarioApi(idNum);
+          setUsers((prev) => {
+            const updated = prev.filter((u) => u.id !== userToDelete.id);
+            return updated;
+          });
         }
       } catch {
-        // erro silencioso
+        window.alert('Não foi possível remover o usuário. Verifique a API e tente novamente.');
       }
       return;
     }

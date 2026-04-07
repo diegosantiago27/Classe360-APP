@@ -9,11 +9,21 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
-import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { isProvasRelacionalEnabled, listRespostasRelacionalParaProfessor } from '@/lib/provasRelApi';
+import {
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 const normalizeText = (value?: string) =>
   (value ?? '')
@@ -122,6 +132,79 @@ export default function Correcoes() {
   const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaResposta[]>([]);
 
   useEffect(() => {
+    if (isApiEnabled()) {
+      void Promise.all([
+        listUsuariosApi(),
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listAtividadesApi(),
+        listEntregasAtividadesApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([usuariosApi, disciplinasApi, turmasApi, atividadesApi, entregasApi, vincRows]) => {
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: String(u.role ?? '').includes('PROFESSOR')
+              ? 3
+              : String(u.role ?? '').includes('ADMIN')
+                ? 2
+                : String(u.role ?? '').includes('GESTOR')
+                  ? 1
+                  : String(u.role ?? '').includes('SECRETARIA')
+                    ? 5
+                    : 4,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status ?? 'Ativa',
+            professor: t.professorId ? String(t.professorId) : '',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            proximaAula: '',
+          }));
+          const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+          const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
+          const atividadesMapped: Atividade[] = atividadesApi.map((a) => ({
+            id: String(a.id ?? ''),
+            professorId: '',
+            turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
+            disciplina:
+              disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
+            turno: '',
+            titulo: a.titulo ?? '',
+          }));
+          const usuarioNomeById = new Map(usuariosMapped.map((u) => [u.id, u.nome]));
+          const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => ({
+            id: String(e.id ?? ''),
+            atividadeId: String(e.atividadeId ?? ''),
+            alunoId: String(e.alunoId ?? ''),
+            alunoNome: usuarioNomeById.get(String(e.alunoId ?? '')) ?? '',
+            nota: e.nota ?? null,
+            corrigidoEm: e.corrigido ? new Date().toISOString() : undefined,
+            enviadoEm: '',
+          }));
+
+          saveToStorage(usersStorageKey, usuariosMapped);
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(atividadesStorageKey, atividadesMapped);
+          saveToStorage(entregasStorageKey, entregasMapped);
+          saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculo[]);
+        })
+        .catch(() => null)
+        .finally(() => setSyncSeed((prev) => prev + 1));
+      return;
+    }
     const keys = [
       usersStorageKey,
       disciplinasStorageKey,
@@ -195,7 +278,7 @@ export default function Correcoes() {
     [syncSeed],
   );
   const respostasProvas = useMemo(
-    () => loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, []),
+    () => (isProvasRelacionalEnabled() ? [] : loadFromStorage<ProvaResposta[]>(provasRespostasStorageKey, [])),
     [syncSeed],
   );
   const respostasProvasCombinadas = useMemo(() => {

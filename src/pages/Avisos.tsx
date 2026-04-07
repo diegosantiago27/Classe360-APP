@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Bell, Pencil, Send, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
@@ -10,9 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
+import { deleteAvisoApi, isApiEnabled, listAvisosApi, saveAvisoApi } from '@/lib/entityCrudApi';
 
 type AvisoNivel = 'Informativo' | 'Urgente' | 'Lembrete';
 
@@ -24,10 +25,23 @@ interface Aviso {
   nivel: AvisoNivel;
 }
 
+const LEVEL_PREFIX = /^\[NIVEL:(Informativo|Urgente|Lembrete)\]\s*/;
+
+const encodeConteudo = (nivel: AvisoNivel, descricao: string) => `[NIVEL:${nivel}] ${descricao}`;
+
+const decodeConteudo = (conteudo: string): { nivel: AvisoNivel; descricao: string } => {
+  const match = conteudo.match(LEVEL_PREFIX);
+  if (!match) return { nivel: 'Informativo', descricao: conteudo };
+  const nivel = (match[1] as AvisoNivel) ?? 'Informativo';
+  return { nivel, descricao: conteudo.replace(LEVEL_PREFIX, '').trim() };
+};
+
 const storageKey = 'school-compass:avisos';
 const avisosLidosKey = 'school-compass:avisos-lidos';
 
-const defaultAvisos: Aviso[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+const defaultAvisos: Aviso[] = API_URL ? [] : [
   {
     id: 'AV-001',
     titulo: 'Reuniao de pais',
@@ -59,13 +73,55 @@ const Avisos: React.FC = () => {
     () => loadFromStorage<Record<string, string[]>>(avisosLidosKey, {}),
   );
   const [avisos, setAvisos] = useState<Aviso[]>(
-    () => loadFromStorage<Aviso[]>(storageKey, defaultAvisos),
+    () => loadFromStorage<Aviso[]>(storageKey, isApiEnabled() ? [] : defaultAvisos),
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [titulo, setTitulo] = useState('');
   const [mensagem, setMensagem] = useState('');
   const [nivel, setNivel] = useState<AvisoNivel>('Informativo');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      setLoading(true);
+      void listAvisosApi()
+        .then((items) => {
+          const mapped: Aviso[] = items
+            .map((item) => {
+              const parsed = decodeConteudo(item.conteudo ?? '');
+              const dataFmt = item.dataCriacao
+                ? new Date(item.dataCriacao).toLocaleDateString('pt-BR')
+                : new Date().toLocaleDateString('pt-BR');
+              return {
+                id: String(item.id ?? createId('aviso')),
+                titulo: item.titulo ?? '',
+                descricao: parsed.descricao,
+                nivel: parsed.nivel,
+                data: dataFmt,
+              };
+            })
+            .sort((a, b) => b.data.localeCompare(a.data));
+          setAvisos(mapped);
+          saveToStorage(storageKey, mapped);
+        })
+        .catch(() => {
+          toast({
+            title: 'Erro ao carregar',
+            description: 'Nao foi possivel carregar avisos do servidor.',
+            variant: 'destructive',
+          });
+          setAvisos([]);
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+    // Sem backend, mantém modo local
+    void syncKeysFromBackend([storageKey, avisosLidosKey]).finally(() => {
+      setAvisos(loadFromStorage<Aviso[]>(storageKey, defaultAvisos));
+      setAvisosLidos(loadFromStorage<Record<string, string[]>>(avisosLidosKey, {}));
+    });
+  }, []);
 
   const totalUrgentes = useMemo(
     () => avisos.filter((aviso) => aviso.nivel === 'Urgente').length,
@@ -96,33 +152,78 @@ const Avisos: React.FC = () => {
     event.preventDefault();
     const dataHoje = new Date().toLocaleDateString('pt-BR');
 
-    if (editingId) {
-      const updated = avisos.map((aviso) =>
-        aviso.id === editingId
-          ? { ...aviso, titulo, descricao: mensagem, nivel }
-          : aviso,
-      );
-      setAvisos(updated);
-      saveToStorage(storageKey, updated);
-    } else {
-      const novoAviso: Aviso = {
-        id: createId('aviso'),
+    if (isApiEnabled()) {
+      setLoading(true);
+      const payload = {
+        id: editingId ? Number(editingId) : undefined,
         titulo,
-        descricao: mensagem,
-        data: dataHoje,
-        nivel,
+        conteudo: encodeConteudo(nivel, mensagem),
+        criadoPorId: user?.id ? Number(user.id) : undefined,
       };
-      const updated = [novoAviso, ...avisos];
-      setAvisos(updated);
-      saveToStorage(storageKey, updated);
+      void saveAvisoApi(payload)
+        .then((saved) => {
+          const parsed = decodeConteudo(saved.conteudo ?? payload.conteudo);
+          const avisoSalvo: Aviso = {
+            id: String(saved.id ?? editingId ?? createId('aviso')),
+            titulo: saved.titulo ?? titulo,
+            descricao: parsed.descricao,
+            nivel: parsed.nivel,
+            data: saved.dataCriacao
+              ? new Date(saved.dataCriacao).toLocaleDateString('pt-BR')
+              : dataHoje,
+          };
+          const updated = editingId
+            ? avisos.map((aviso) => (aviso.id === editingId ? avisoSalvo : aviso))
+            : [avisoSalvo, ...avisos];
+          setAvisos(updated);
+          saveToStorage(storageKey, updated);
+          toast({
+            title: editingId ? 'Aviso atualizado' : 'Aviso enviado',
+            description: 'O aviso foi registrado e sera exibido aos usuarios.',
+          });
+          resetForm();
+          setDialogOpen(false);
+        })
+        .catch(() => {
+          toast({
+            title: 'Erro ao salvar',
+            description: 'Nao foi possivel salvar no servidor.',
+            variant: 'destructive',
+          });
+        })
+        .finally(() => setLoading(false));
+      return;
     }
 
-    toast({
-      title: editingId ? 'Aviso atualizado' : 'Aviso enviado',
-      description: 'O aviso foi registrado e sera exibido aos usuarios.',
-    });
-    resetForm();
-    setDialogOpen(false);
+    if (!isApiEnabled()) {
+      if (editingId) {
+        const updated = avisos.map((aviso) =>
+          aviso.id === editingId
+            ? { ...aviso, titulo, descricao: mensagem, nivel }
+            : aviso,
+        );
+        setAvisos(updated);
+        saveToStorage(storageKey, updated);
+      } else {
+        const novoAviso: Aviso = {
+          id: createId('aviso'),
+          titulo,
+          descricao: mensagem,
+          data: dataHoje,
+          nivel,
+        };
+        const updated = [novoAviso, ...avisos];
+        setAvisos(updated);
+        saveToStorage(storageKey, updated);
+      }
+
+      toast({
+        title: editingId ? 'Aviso atualizado' : 'Aviso enviado',
+        description: 'O aviso foi registrado e sera exibido aos usuarios.',
+      });
+      resetForm();
+      setDialogOpen(false);
+    }
   };
 
   const handleDelete = (aviso: Aviso) => {
@@ -130,6 +231,22 @@ const Avisos: React.FC = () => {
       `Deseja remover o aviso "${aviso.titulo}"?`,
     );
     if (!confirmed) return;
+    if (isApiEnabled() && Number.isFinite(Number(aviso.id))) {
+      setLoading(true);
+      void deleteAvisoApi(Number(aviso.id))
+        .then(() => {
+          setAvisos((prev) => prev.filter((item) => item.id !== aviso.id));
+        })
+        .catch(() => {
+          toast({
+            title: 'Erro ao remover',
+            description: 'Nao foi possivel remover o aviso no servidor.',
+            variant: 'destructive',
+          });
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
     const updated = avisos.filter((item) => item.id !== aviso.id);
     setAvisos(updated);
     saveToStorage(storageKey, updated);
@@ -177,7 +294,7 @@ const Avisos: React.FC = () => {
                   Total de avisos
                 </CardTitle>
                 <div className="text-2xl font-semibold text-foreground">
-                  {avisos.length}
+                  {loading ? '...' : avisos.length}
                 </div>
               </div>
               <Bell className="w-5 h-5 text-primary" />

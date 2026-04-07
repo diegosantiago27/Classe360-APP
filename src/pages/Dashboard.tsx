@@ -1,11 +1,20 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile, getProfileLabel } from '@/types/auth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import QuickAccessCard from '@/components/common/QuickAccessCard';
 import StatCard from '@/components/common/StatCard';
-import { loadFromStorage } from '@/lib/mockStorage';
+import { loadFromStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { defaultUsers, usersStorageKey, StoredUser } from '@/lib/mockUsers';
+import {
+  isApiEnabled,
+  listAvisosApi,
+  listFrequenciasApi,
+  listNotasApi,
+  listProvasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
 import {
   Users,
   GraduationCap,
@@ -32,6 +41,7 @@ interface FrequenciaRegistro {
 }
 
 interface Prova {
+  id?: string;
   data: string;
   horario: string;
   titulo: string;
@@ -54,67 +64,176 @@ interface FrequenciaAluno {
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
+  const [storageTick, setStorageTick] = useState(0);
+  const [apiSnapshot, setApiSnapshot] = useState<{
+    users: StoredUser[];
+    turmas: Turma[];
+    notas: NotaLancamento[];
+    frequencias: FrequenciaRegistro[];
+    provas: Prova[];
+    avisos: Aviso[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isApiEnabled()) return;
+    void syncKeysFromBackend([
+      usersStorageKey,
+      'school-compass:turmas',
+      'school-compass:frequencia',
+      'school-compass:avisos',
+      'school-compass:minhas-notas',
+      'school-compass:minha-frequencia',
+    ]).finally(() => setStorageTick((prev) => prev + 1));
+  }, []);
+
+  useEffect(() => {
+    if (!isApiEnabled()) return;
+    void Promise.all([
+      listUsuariosApi(),
+      listTurmasApi(),
+      listNotasApi(),
+      listFrequenciasApi(),
+      listProvasApi(),
+      listAvisosApi(),
+    ])
+      .then(([usuariosApi, turmasApi, notasApi, frequenciasApi, provasApi, avisosApi]) => {
+        const usersMapped: StoredUser[] = usuariosApi.map((u) => {
+          const role = String(u.role ?? '').toUpperCase();
+          let perfil = UserProfile.ALUNO;
+          if (role.includes('GESTOR')) perfil = UserProfile.GESTOR;
+          else if (role.includes('ADMIN')) perfil = UserProfile.ADMINISTRADOR;
+          else if (role.includes('SECRETARIA')) perfil = UserProfile.SECRETARIA;
+          else if (role.includes('PROFESSOR')) perfil = UserProfile.PROFESSOR;
+          return {
+            id: String(u.id ?? ''),
+            cpf: '',
+            nome: '',
+            email: '',
+            perfil,
+            status: 'ativo',
+          };
+        });
+
+        const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+        }));
+
+        const notasMapped: NotaLancamento[] = notasApi.map((n) => ({
+          status: n.valor == null ? 'Pendente' : 'Concluida',
+        }));
+
+        const frequenciasMapped: FrequenciaRegistro[] = frequenciasApi.map((f) => ({
+          presencas: f.presente ? 100 : 0,
+        }));
+
+        const provasMapped: Prova[] = provasApi.map((p) => ({
+          id: String(p.id ?? ''),
+          data: p.data ?? '',
+          horario: p.horario ?? '',
+          titulo: p.titulo ?? '',
+          status:
+            p.status === 'Concluida' || p.status === 'Rascunho' || p.status === 'Agendada'
+              ? p.status
+              : 'Agendada',
+        }));
+
+        const avisosMapped: Aviso[] = avisosApi.map((a) => {
+          const conteudo = a.conteudo ?? '';
+          const nivel =
+            conteudo.includes('[NIVEL:Urgente]')
+              ? 'Urgente'
+              : conteudo.includes('[NIVEL:Lembrete]')
+                ? 'Lembrete'
+                : 'Informativo';
+          const data = a.dataCriacao
+            ? new Date(a.dataCriacao).toLocaleDateString('pt-BR')
+            : new Date().toLocaleDateString('pt-BR');
+          return {
+            titulo: a.titulo ?? '',
+            data,
+            nivel,
+          };
+        });
+
+        setApiSnapshot({
+          users: usersMapped,
+          turmas: turmasMapped,
+          notas: notasMapped,
+          frequencias: frequenciasMapped,
+          provas: provasMapped,
+          avisos: avisosMapped,
+        });
+      })
+      .catch(() => null);
+  }, []);
+
   const users = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
-    []
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
+    [storageTick]
   );
   const turmas = useMemo(
     () => loadFromStorage<Turma[]>('school-compass:turmas', []),
-    []
+    [storageTick]
   );
   const notas = useMemo(
     () => loadFromStorage<NotaLancamento[]>('school-compass:notas', []),
-    []
+    [storageTick]
   );
   const frequencias = useMemo(
     () => loadFromStorage<FrequenciaRegistro[]>('school-compass:frequencia', []),
-    []
+    [storageTick]
   );
   const provas = useMemo(
     () => loadFromStorage<Prova[]>('school-compass:provas', []),
-    []
+    [storageTick]
   );
   const avisos = useMemo(
     () => loadFromStorage<Aviso[]>('school-compass:avisos', []),
-    []
+    [storageTick]
   );
   const minhasNotas = useMemo(
     () => loadFromStorage<NotaAluno[]>('school-compass:minhas-notas', []),
-    []
+    [storageTick]
   );
   const minhaFrequencia = useMemo(
     () => loadFromStorage<FrequenciaAluno[]>('school-compass:minha-frequencia', []),
-    []
+    [storageTick]
   );
+  const usersFonte = isApiEnabled() ? (apiSnapshot?.users ?? []) : users;
+  const turmasFonte = isApiEnabled() ? (apiSnapshot?.turmas ?? []) : turmas;
+  const notasFonte = isApiEnabled() ? (apiSnapshot?.notas ?? []) : notas;
+  const frequenciasFonte = isApiEnabled() ? (apiSnapshot?.frequencias ?? []) : frequencias;
+  const provasFonte = isApiEnabled() ? (apiSnapshot?.provas ?? []) : provas;
+  const avisosFonte = isApiEnabled() ? (apiSnapshot?.avisos ?? []) : avisos;
 
   const totalAlunos = useMemo(
-    () => users.filter((item) => item.perfil === UserProfile.ALUNO).length,
-    [users]
+    () => usersFonte.filter((item) => item.perfil === UserProfile.ALUNO).length,
+    [usersFonte]
   );
   const totalProfessores = useMemo(
-    () => users.filter((item) => item.perfil === UserProfile.PROFESSOR).length,
-    [users]
+    () => usersFonte.filter((item) => item.perfil === UserProfile.PROFESSOR).length,
+    [usersFonte]
   );
   const frequenciaMedia = useMemo(() => {
-    if (frequencias.length === 0) return 0;
+    if (frequenciasFonte.length === 0) return 0;
     return (
       Math.round(
-        frequencias.reduce((acc, item) => acc + item.presencas, 0) / frequencias.length
+        frequenciasFonte.reduce((acc, item) => acc + item.presencas, 0) / frequenciasFonte.length
       ) || 0
     );
-  }, [frequencias]);
+  }, [frequenciasFonte]);
   const notasPendentes = useMemo(
-    () => notas.filter((item) => item.status === 'Pendente').length,
-    [notas]
+    () => notasFonte.filter((item) => item.status === 'Pendente').length,
+    [notasFonte]
   );
   const mediaNotas = useMemo(() => {
-    if (notas.length === 0) return 0;
-    const base = notas.reduce(
+    if (notasFonte.length === 0) return 0;
+    const base = notasFonte.reduce(
       (acc, item) => acc + (item.status === 'Concluida' ? 8 : 6.5),
       0
     );
-    return Math.round((base / notas.length) * 10) / 10;
-  }, [notas]);
+    return Math.round((base / notasFonte.length) * 10) / 10;
+  }, [notasFonte]);
   const mediaAluno = useMemo(() => {
     if (minhasNotas.length === 0) return 0;
     return (
@@ -132,17 +251,17 @@ const Dashboard: React.FC = () => {
     );
   }, [minhaFrequencia]);
   const provasAgendadas = useMemo(
-    () => provas.filter((item) => item.status === 'Agendada').length,
-    [provas]
+    () => provasFonte.filter((item) => item.status === 'Agendada').length,
+    [provasFonte]
   );
   const materiasAluno = useMemo(() => minhasNotas.length, [minhasNotas]);
 
   const avisosRecentes = useMemo(() => {
-    return avisos.slice(0, 3);
-  }, [avisos]);
+    return avisosFonte.slice(0, 3);
+  }, [avisosFonte]);
 
   const proximosEventos = useMemo(() => {
-    const parsed = provas
+    const parsed = provasFonte
       .filter((item) => item.status === 'Agendada')
       .map((item) => {
         const date = new Date(item.data);
@@ -153,7 +272,7 @@ const Dashboard: React.FC = () => {
       })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
     return parsed.slice(0, 3);
-  }, [provas]);
+  }, [provasFonte]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -359,7 +478,7 @@ const Dashboard: React.FC = () => {
             <StatCard
               icon={BookOpen}
               title="Minhas Turmas"
-              value={turmas.length}
+              value={turmasFonte.length}
               variant="primary"
               delay={0}
             />

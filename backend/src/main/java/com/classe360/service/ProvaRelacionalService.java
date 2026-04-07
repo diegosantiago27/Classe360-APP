@@ -21,6 +21,7 @@ public class ProvaRelacionalService {
     private final QuestaoRepository questaoRepository;
     private final UsuarioRepository usuarioRepository;
     private final TurmaRepository turmaRepository;
+    private final TurnoRepository turnoRepository;
     private final DisciplinaRepository disciplinaRepository;
     private final ProvaRespostaRepository provaRespostaRepository;
     private final ObjectMapper objectMapper;
@@ -300,14 +301,37 @@ public class ProvaRelacionalService {
         if (turmaNome == null || turmaNome.isBlank()) {
             throw new IllegalArgumentException("Turma é obrigatória");
         }
+        Turno turnoEntidade = resolverTurnoEntidade(turno);
         return turmaRepository.findByNomeIgnoreCase(turmaNome)
             .orElseGet(() -> turmaRepository.save(Turma.builder()
                 .nome(turmaNome)
-                .turno(turno != null && !turno.isBlank() ? turno : "Manha")
+                .turno(turnoEntidade)
                 .status("Ativa")
                 .professor(professor)
                 .alunos(new HashSet<>())
                 .build()));
+    }
+
+    private Turno resolverTurnoEntidade(String turno) {
+        if (turno == null || turno.isBlank()) {
+            return turnoRepository
+                .findByCodigoIgnoreCase("MANHA")
+                .orElseThrow(() -> new IllegalStateException("Catálogo de turnos (MANHA) não encontrado"));
+        }
+        String n = normalizar(turno);
+        if (n.contains("tarde")) {
+            return turnoRepository
+                .findByCodigoIgnoreCase("TARDE")
+                .orElseThrow(() -> new IllegalStateException("Catálogo de turnos (TARDE) não encontrado"));
+        }
+        if (n.contains("noite")) {
+            return turnoRepository
+                .findByCodigoIgnoreCase("NOITE")
+                .orElseThrow(() -> new IllegalStateException("Catálogo de turnos (NOITE) não encontrado"));
+        }
+        return turnoRepository
+            .findByCodigoIgnoreCase("MANHA")
+            .orElseThrow(() -> new IllegalStateException("Catálogo de turnos (MANHA) não encontrado"));
     }
 
     private Questao.TipoQuestao normalizarTipo(String tipo) {

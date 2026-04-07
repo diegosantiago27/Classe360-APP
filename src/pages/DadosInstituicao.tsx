@@ -8,12 +8,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
 import { useToast } from '@/hooks/use-toast';
-import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import {
   defaultInstituicao,
   instituicaoStorageKey,
   DadosInstituicao,
 } from '@/lib/mockInstituicao';
+import {
+  getInstituicaoApi,
+  isApiEnabled,
+  saveInstituicaoApi,
+} from '@/lib/entityCrudApi';
 
 const DadosInstituicaoPage: React.FC = () => {
   const { user } = useAuth();
@@ -25,12 +30,38 @@ const DadosInstituicaoPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const stored = loadFromStorage<DadosInstituicao | null>(instituicaoStorageKey, null);
-    if (stored) {
-      setFormData(stored);
-    } else {
-      setFormData(defaultInstituicao);
+    if (isApiEnabled()) {
+      void getInstituicaoApi()
+        .then((row) => {
+          const mapped: DadosInstituicao = {
+            nome: row.nome ?? defaultInstituicao.nome,
+            cnpj: row.cnpj ?? '',
+            telefone: row.telefone ?? '',
+            email: row.email ?? '',
+            endereco: row.endereco ?? '',
+            numero: row.numero ?? '',
+            complemento: row.complemento ?? '',
+            bairro: row.bairro ?? '',
+            cidade: row.cidade ?? '',
+            estado: row.estado ?? '',
+            cep: row.cep ?? '',
+          };
+          setFormData(mapped);
+          saveToStorage(instituicaoStorageKey, mapped);
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar os dados da instituição. Verifique a API e tente novamente.');
+        });
+      return;
     }
+    void syncKeysFromBackend([instituicaoStorageKey]).finally(() => {
+      const stored = loadFromStorage<DadosInstituicao | null>(instituicaoStorageKey, null);
+      if (stored) {
+        setFormData(stored);
+      } else {
+        setFormData(defaultInstituicao);
+      }
+    });
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -73,11 +104,46 @@ const DadosInstituicaoPage: React.FC = () => {
     setFormData((prev) => ({ ...prev, [name]: formatted }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!podeEditar) return;
     setIsLoading(true);
-    saveToStorage(instituicaoStorageKey, formData);
+    if (isApiEnabled()) {
+      try {
+        const saved = await saveInstituicaoApi({
+          nome: formData.nome,
+          cnpj: formData.cnpj,
+          telefone: formData.telefone,
+          email: formData.email,
+          endereco: formData.endereco,
+          numero: formData.numero,
+          complemento: formData.complemento,
+          bairro: formData.bairro,
+          cidade: formData.cidade,
+          estado: formData.estado,
+          cep: formData.cep,
+        });
+        const mapped: DadosInstituicao = {
+          nome: saved.nome ?? formData.nome,
+          cnpj: saved.cnpj ?? formData.cnpj,
+          telefone: saved.telefone ?? formData.telefone,
+          email: saved.email ?? formData.email,
+          endereco: saved.endereco ?? formData.endereco,
+          numero: saved.numero ?? formData.numero,
+          complemento: saved.complemento ?? formData.complemento,
+          bairro: saved.bairro ?? formData.bairro,
+          cidade: saved.cidade ?? formData.cidade,
+          estado: saved.estado ?? formData.estado,
+          cep: saved.cep ?? formData.cep,
+        };
+        setFormData(mapped);
+        saveToStorage(instituicaoStorageKey, mapped);
+      } catch {
+        window.alert('Não foi possível salvar. Verifique a API e tente novamente.');
+      }
+    } else {
+      saveToStorage(instituicaoStorageKey, formData);
+    }
     toast({
       title: 'Dados salvos',
       description: 'Os dados da instituição foram atualizados.',

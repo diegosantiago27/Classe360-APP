@@ -16,6 +16,24 @@ import { Turma, TurmaStatus, TurmaTurno, turmasStorageKey, defaultTurmas } from 
 import { Link } from 'react-router-dom';
 import { Checkbox } from '@/components/ui/checkbox';
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
+import {
+  deleteTurmaApi,
+  isApiEnabled,
+  listTurmasApi,
+  listTurnosApi,
+  listUsuariosApi,
+  saveTurmaApi,
+} from '@/lib/entityCrudApi';
+import {
+  TURNOS_PADRAO,
+  idTurnoEfetivo,
+  rotuloTurnoParaExibicao,
+  turnoNomeParaTipo,
+  turnoTipoParaIdPadrao,
+  type TurnoOption,
+} from '@/lib/turnosCatalog';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface DisciplinaVinculoStorage {
   turmaId: string;
@@ -77,6 +95,29 @@ function roleToPerfil(role: string): UserProfile {
   }
 }
 
+const SELECT_SEM_PROFESSOR = '__none__';
+
+/** Com a API, turma.professor vem como id; no mock costuma ser o nome. */
+function normalizarCampoProfessorNoSelect(raw: string, usuarios: StoredUser[]): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const profs = usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR);
+  if (profs.some((p) => String(p.id) === trimmed)) return trimmed;
+  const porNome = profs.find((p) => p.nome === trimmed);
+  return porNome ? String(porNome.id) : trimmed;
+}
+
+function resolverProfessorIdParaApi(professorField: string, usuarios: StoredUser[]): number | null {
+  const trimmed = professorField.trim();
+  if (!trimmed) return null;
+  const profs = usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR);
+  const porId = profs.find((p) => String(p.id) === trimmed);
+  if (porId && Number.isFinite(Number(porId.id))) return Number(porId.id);
+  const porNome = profs.find((p) => p.nome === trimmed);
+  if (porNome && Number.isFinite(Number(porNome.id))) return Number(porNome.id);
+  return null;
+}
+
 const Turmas: React.FC = () => {
   const { user } = useAuth();
   const podeCriarTurma =
@@ -91,13 +132,13 @@ const Turmas: React.FC = () => {
   const podeRemoverTurmaVazia = user?.perfil === UserProfile.SECRETARIA;
   const podeRemoverTurma = podeRemoverTurmaAdmin || podeRemoverTurmaVazia;
   const [turmas, setTurmas] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculoStorage[]>(
     () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
   );
   const [usuarios, setUsuarios] = useState<StoredUser[]>(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -105,26 +146,91 @@ const Turmas: React.FC = () => {
   const [anoSerie, setAnoSerie] = useState('');
   const [alunosSelecionados, setAlunosSelecionados] = useState<string[]>([]);
   const [alunoCpfBusca, setAlunoCpfBusca] = useState('');
+  const [opcoesTurno, setOpcoesTurno] = useState<TurnoOption[]>(TURNOS_PADRAO);
   const [draft, setDraft] = useState<Omit<Turma, 'id'>>({
     nome: '',
     turno: 'Manha',
+    turnoId: '1',
+    turnoNome: 'Manhã',
     alunos: 0,
     professor: '',
     status: 'Ativa',
     proximaAula: '',
   });
 
+  const refreshFromApi = () => {
+    if (!isApiEnabled()) return Promise.resolve();
+    return Promise.all([
+      listTurmasApi(),
+      listUsuariosApi(),
+      listTurnosApi().catch(() => []),
+    ])
+      .then(([turmasApi, usuariosApi, turnosApi]) => {
+        if (Array.isArray(turnosApi) && turnosApi.length > 0) {
+          setOpcoesTurno(
+            turnosApi.map((r) => ({
+              id: r.id,
+              codigo: r.codigo,
+              nome: r.nome?.trim() ? r.nome : String(r.id),
+            })),
+          );
+        }
+        const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
+          turno: undefined,
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          turmas: [],
+        }));
+        const turmasMapped: Turma[] = turmasApi.map((t) => {
+          const nomeTurno = t.turnoNome?.trim() ?? '';
+          const tid =
+            t.turnoId != null && Number.isFinite(Number(t.turnoId))
+              ? String(t.turnoId)
+              : turnoTipoParaIdPadrao(turnoNomeParaTipo(nomeTurno));
+          return {
+            id: String(t.id ?? createId('turma')),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            turnoId: tid,
+            turnoNome: nomeTurno || undefined,
+            turno: turnoNomeParaTipo(nomeTurno),
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: t.professorId ? String(t.professorId) : '',
+            status: (t.status as TurmaStatus) ?? 'Ativa',
+            proximaAula: '',
+          };
+        });
+        const usuariosComTurmas = mergeAlunosTurmasFromApi(usuariosMapped, turmasApi);
+        setUsuarios(usuariosComTurmas);
+        setTurmas(turmasMapped);
+        saveToStorage(usersStorageKey, usuariosComTurmas);
+        saveToStorage(turmasStorageKey, turmasMapped);
+      })
+      .catch(() => null);
+  };
+
   useEffect(() => {
+    if (isApiEnabled()) {
+      void refreshFromApi().finally(() => {
+        void loadVinculosDisciplinaTurma()
+          .then((rows) => setVinculos(rows as DisciplinaVinculoStorage[]))
+          .catch(() => setVinculos([]));
+      });
+      return;
+    }
     const keys = [usersStorageKey, turmasStorageKey, vinculosStorageKey];
     void syncKeysFromBackend(keys).finally(() => {
-      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers));
-      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers));
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
       setVinculos(loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []));
     });
   }, []);
 
   useEffect(() => {
-    if (!API_URL) return;
+    if (!API_URL || isApiEnabled()) return;
     let cancelled = false;
     const token = localStorage.getItem('token');
     fetch(`${API_URL}/api/usuarios?size=500`, {
@@ -154,6 +260,10 @@ const Turmas: React.FC = () => {
 
   const alunosDisponiveis = useMemo(
     () => usuarios.filter((u) => u.perfil === UserProfile.ALUNO && u.status === 'ativo'),
+    [usuarios],
+  );
+  const professoresDisponiveis = useMemo(
+    () => usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR && u.status === 'ativo'),
     [usuarios],
   );
   const alunosFiltradosPorCpf = useMemo(() => {
@@ -262,6 +372,8 @@ const Turmas: React.FC = () => {
     setDraft({
       nome: '',
       turno: 'Manha',
+      turnoId: '1',
+      turnoNome: 'Manhã',
       alunos: 0,
       professor: '',
       status: 'Ativa',
@@ -284,8 +396,10 @@ const Turmas: React.FC = () => {
     setDraft({
       nome: turma.nome,
       turno: turma.turno,
+      turnoId: turma.turnoId ?? turnoTipoParaIdPadrao(turma.turno),
+      turnoNome: turma.turnoNome ?? '',
       alunos: turma.alunos,
-      professor: turma.professor,
+      professor: normalizarCampoProfessorNoSelect(turma.professor, usuarios),
       status: turma.status,
       proximaAula: turma.proximaAula,
     });
@@ -303,11 +417,15 @@ const Turmas: React.FC = () => {
       if (editingId && turma.id === editingId) return false;
       return (
         turma.nome.trim().toLocaleLowerCase('pt-BR') === nomeNormalizado &&
-        turma.turno === draft.turno
+        idTurnoEfetivo(turma) === idTurnoEfetivo(draft as Pick<Turma, 'turnoId' | 'turno'>)
       );
     });
     if (turmaDuplicada) {
-      window.alert(`Ja existe uma turma "${turmaNome}" no turno ${draft.turno}.`);
+      const rotuloTurno =
+        opcoesTurno.find((o) => String(o.id) === idTurnoEfetivo(draft as Pick<Turma, 'turnoId' | 'turno'>))?.nome ??
+        draft.turnoNome ??
+        draft.turno;
+      window.alert(`Ja existe uma turma "${turmaNome}" no turno ${rotuloTurno}.`);
       return;
     }
 
@@ -334,6 +452,28 @@ const Turmas: React.FC = () => {
       return;
     }
 
+    const professorIdNum = resolverProfessorIdParaApi(draft.professor, usuarios);
+    if (isApiEnabled() && professorIdNum == null) {
+      window.alert('Selecione o professor responsavel pela turma.');
+      return;
+    }
+
+    const turnoIdNum = Number(draft.turnoId);
+    if (isApiEnabled() && !Number.isFinite(turnoIdNum)) {
+      window.alert('Selecione o turno da turma.');
+      return;
+    }
+
+    const opcaoTurnoSelecionada = opcoesTurno.find((o) => String(o.id) === String(draft.turnoId));
+    const turnoNomePersist = opcaoTurnoSelecionada?.nome ?? draft.turnoNome ?? '';
+    const turnoTipoPersist = opcaoTurnoSelecionada
+      ? turnoNomeParaTipo(opcaoTurnoSelecionada.nome)
+      : draft.turno;
+
+    const professorRotuloArmazenamento =
+      professoresDisponiveis.find((p) => String(p.id) === draft.professor.trim())?.nome ??
+      draft.professor.trim();
+
     const updatedUsers = usuarios.map((usuario) => {
       if (usuario.perfil !== UserProfile.ALUNO) return usuario;
       const hadOldTurma = oldTurmaNome ? (usuario.turmas ?? []).includes(oldTurmaNome) : false;
@@ -347,15 +487,49 @@ const Turmas: React.FC = () => {
       }
       return { ...usuario, turmas: turmasUsuario };
     });
-    setUsuarios(updatedUsers);
-    saveToStorage(usersStorageKey, updatedUsers);
+    if (!isApiEnabled()) {
+      setUsuarios(updatedUsers);
+      saveToStorage(usersStorageKey, updatedUsers);
+    }
 
     if (editingId) {
       const updated = turmas.map((turma) =>
-        turma.id === editingId ? { ...turma, ...draft, nome: turmaNome, alunos: alunosSelecionados.length } : turma,
+        turma.id === editingId
+          ? {
+              ...turma,
+              ...draft,
+              nome: turmaNome,
+              alunos: alunosSelecionados.length,
+              professor: professorRotuloArmazenamento,
+              turnoId: String(draft.turnoId),
+              turnoNome: turnoNomePersist,
+              turno: turnoTipoPersist,
+            }
+          : turma,
       );
-      setTurmas(updated);
-      saveToStorage(turmasStorageKey, updated);
+      if (isApiEnabled()) {
+        const alunosIdsNum = alunosSelecionados
+          .map((id) => Number(id))
+          .filter((n) => Number.isFinite(n));
+        const turmaIdNum = Number(editingId);
+        void saveTurmaApi({
+          id: Number.isFinite(turmaIdNum) ? turmaIdNum : undefined,
+          nome: turmaNome,
+          turnoId: turnoIdNum,
+          status: draft.status,
+          professorId: professorIdNum,
+          alunosIds: alunosIdsNum,
+        })
+          .then(() => refreshFromApi())
+          .catch((err) =>
+            window.alert(
+              `Não foi possível salvar a turma. ${err instanceof Error ? err.message : 'Verifique a API e tente novamente.'}`,
+            ),
+          );
+      } else {
+        setTurmas(updated);
+        saveToStorage(turmasStorageKey, updated);
+      }
     } else {
       const newTurmas = [
         ...turmas,
@@ -364,10 +538,33 @@ const Turmas: React.FC = () => {
           ...draft,
           nome: turmaNome,
           alunos: alunosSelecionados.length,
+          professor: professorRotuloArmazenamento,
+          turnoId: String(draft.turnoId),
+          turnoNome: turnoNomePersist,
+          turno: turnoTipoPersist,
         },
       ];
-      setTurmas(newTurmas);
-      saveToStorage(turmasStorageKey, newTurmas);
+      if (isApiEnabled()) {
+        const alunosIdsNum = alunosSelecionados
+          .map((id) => Number(id))
+          .filter((n) => Number.isFinite(n));
+        void saveTurmaApi({
+          nome: turmaNome,
+          turnoId: turnoIdNum,
+          status: draft.status,
+          professorId: professorIdNum,
+          alunosIds: alunosIdsNum,
+        })
+          .then(() => refreshFromApi())
+          .catch((err) =>
+            window.alert(
+              `Não foi possível salvar a turma. ${err instanceof Error ? err.message : 'Verifique a API e tente novamente.'}`,
+            ),
+          );
+      } else {
+        setTurmas(newTurmas);
+        saveToStorage(turmasStorageKey, newTurmas);
+      }
     }
 
     setDialogOpen(false);
@@ -388,6 +585,15 @@ const Turmas: React.FC = () => {
       `Deseja remover a turma ${turma.nome}? Esta acao nao pode ser desfeita.`,
     );
     if (!confirmed) return;
+    if (isApiEnabled()) {
+      const turmaIdNum = Number(turma.id);
+      if (Number.isFinite(turmaIdNum)) {
+        void deleteTurmaApi(turmaIdNum)
+          .then(() => refreshFromApi())
+          .catch(() => window.alert('Não foi possível remover a turma. Verifique a API e tente novamente.'));
+      }
+      return;
+    }
     const updated = turmas.filter((item) => item.id !== turma.id);
     setTurmas(updated);
     saveToStorage(turmasStorageKey, updated);
@@ -505,7 +711,7 @@ const Turmas: React.FC = () => {
                           {turma.nome}
                         </Link>
                       </TableCell>
-                      <TableCell>{turma.turno}</TableCell>
+                      <TableCell>{rotuloTurnoParaExibicao(turma)}</TableCell>
                       <TableCell>{professorPorTurmaId.get(turma.id) ?? turma.professor ?? '-'}</TableCell>
                       <TableCell>{alunosQuantidadeRealPorTurmaId.get(turma.id) ?? 0}</TableCell>
                       <TableCell>
@@ -587,22 +793,63 @@ const Turmas: React.FC = () => {
               <div className="space-y-2">
                 <Label htmlFor="turno">Turno</Label>
                 <Select
-                  value={draft.turno}
-                  onValueChange={(value) =>
-                    setDraft((prev) => ({ ...prev, turno: value as TurmaTurno }))
-                  }
+                  value={draft.turnoId ?? turnoTipoParaIdPadrao(draft.turno)}
+                  onValueChange={(value) => {
+                    const row = opcoesTurno.find((o) => String(o.id) === value);
+                    setDraft((prev) => ({
+                      ...prev,
+                      turnoId: value,
+                      turno: row ? turnoNomeParaTipo(row.nome) : prev.turno,
+                      turnoNome: row?.nome ?? prev.turnoNome,
+                    }));
+                  }}
                 >
                   <SelectTrigger id="turno">
                     <SelectValue placeholder="Selecione o turno" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Manha">Manha</SelectItem>
-                    <SelectItem value="Tarde">Tarde</SelectItem>
-                    <SelectItem value="Noite">Noite</SelectItem>
+                    {opcoesTurno.map((o) => (
+                      <SelectItem key={o.id} value={String(o.id)}>
+                        {o.nome}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
+            {(podeCriarTurma || podeEditarTurma) && (
+              <div className="space-y-2">
+                <Label htmlFor="professor-turma">Professor responsavel</Label>
+                <Select
+                  value={draft.professor ? draft.professor : SELECT_SEM_PROFESSOR}
+                  onValueChange={(value) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      professor: value === SELECT_SEM_PROFESSOR ? '' : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger id="professor-turma">
+                    <SelectValue placeholder="Selecione o professor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SELECT_SEM_PROFESSOR}>
+                      {isApiEnabled() ? 'Selecione...' : 'Nenhum'}
+                    </SelectItem>
+                    {professoresDisponiveis.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {professoresDisponiveis.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Cadastre um usuario com perfil Professor para vincular aqui.
+                  </p>
+                )}
+              </div>
+            )}
             {podeVincularAlunosNaTurma && (
               <div className="space-y-2">
                 <Label>Alunos da turma</Label>

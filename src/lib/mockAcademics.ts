@@ -1,12 +1,16 @@
 export interface CatalogItem {
   id: string;
   nome: string;
+  /** Cor da agenda (ex.: blue, green) — persistida na entidade disciplina quando a API está ativa. */
+  cor?: string;
 }
 
 export const disciplinasStorageKey = 'school-compass:disciplinas';
 export const periodosStorageKey = 'school-compass:periodos';
 
-export const defaultDisciplinas: CatalogItem[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export const defaultDisciplinas: CatalogItem[] = API_URL ? [] : [
   { id: 'mat', nome: 'Matematica' },
   { id: 'por', nome: 'Portugues' },
   { id: 'his', nome: 'Historia' },
@@ -19,7 +23,7 @@ export const defaultDisciplinas: CatalogItem[] = [
   { id: 'art', nome: 'Artes' },
 ];
 
-export const defaultPeriodos: CatalogItem[] = [
+export const defaultPeriodos: CatalogItem[] = API_URL ? [] : [
   { id: '1b', nome: '1º Bimestre' },
   { id: '2b', nome: '2º Bimestre' },
   { id: '3b', nome: '3º Bimestre' },

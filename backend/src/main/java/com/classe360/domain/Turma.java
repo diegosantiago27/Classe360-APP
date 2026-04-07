@@ -23,10 +23,11 @@ public class Turma {
     private String nome;
 
     @Column(nullable = false)
-    private String turno;
-
-    @Column(nullable = false)
     private String status;
+
+    @ManyToOne(optional = false)
+    @JoinColumn(name = "turno_id", nullable = false)
+    private Turno turno;
 
     @ManyToOne(optional = false)
     private Usuario professor;

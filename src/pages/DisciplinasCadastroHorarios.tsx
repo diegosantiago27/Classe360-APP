@@ -7,20 +7,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
-
-interface UsuarioApi {
-  id: number;
-  cpf: string;
-  nome: string;
-  email: string;
-  role: string;
-  ativo: boolean;
-}
+import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listGradeAulasApi,
+  listTurmasApi,
+  listUsuariosApi,
+  saveDisciplinaApi,
+  saveDisciplinaTurmaApi,
+  saveGradeAulaApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
 
 interface AulaCadastrada {
   id: string;
@@ -51,7 +54,6 @@ interface DisciplinaVinculo {
 const aulasStorageKey = 'school-compass:grade-aulas';
 const coresStorageKey = 'school-compass:disciplinas-cores';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
-const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
 function formatHorarioInput(value: string): string {
   const apenasDigitos = value.replace(/\D/g, '').slice(0, 4);
@@ -103,13 +105,13 @@ const DisciplinasCadastroHorarios: React.FC = () => {
     [location.search],
   );
   const [disciplinas, setDisciplinas] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
-  const [turmas] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+  const [turmas, setTurmas] = useState<Turma[]>(
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [usuarios, setUsuarios] = useState<StoredUser[]>(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
@@ -117,9 +119,14 @@ const DisciplinasCadastroHorarios: React.FC = () => {
   const [aulas, setAulas] = useState<AulaCadastrada[]>(
     () => loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []),
   );
-  const [coresDisciplinas, setCoresDisciplinas] = useState<Record<string, string>>(
-    () => loadFromStorage<Record<string, string>>(coresStorageKey, {}),
-  );
+
+  const coresDisciplinas = useMemo(() => {
+    const m: Record<string, string> = {};
+    disciplinas.forEach((d) => {
+      m[d.id] = d.cor && d.cor.trim() ? d.cor : 'blue';
+    });
+    return m;
+  }, [disciplinas]);
 
   const [nomeDisciplina, setNomeDisciplina] = useState('');
   const [corSelecionada, setCorSelecionada] = useState('blue');
@@ -135,49 +142,84 @@ const DisciplinasCadastroHorarios: React.FC = () => {
     () => usuarios.filter((u) => u.perfil === UserProfile.PROFESSOR && u.status === 'ativo'),
     [usuarios],
   );
-  const turmasOrdenadas = useMemo(() => {
-    return [...turmas].sort((a, b) => {
-      const numA = parseInt(a.nome.match(/(\d+)/)?.[1] ?? '0', 10);
-      const numB = parseInt(b.nome.match(/(\d+)/)?.[1] ?? '0', 10);
-      if (numA !== numB) return numA - numB;
-      const letraA = a.nome.split(/\s+/).pop() ?? '';
-      const letraB = b.nome.split(/\s+/).pop() ?? '';
-      return letraA.localeCompare(letraB);
-    });
-  }, [turmas]);
-
   useEffect(() => {
     if (!disciplinaIdQuery) return;
     setDisciplinaAulaId(disciplinaIdQuery);
   }, [disciplinaIdQuery]);
 
   useEffect(() => {
-    if (!API_URL) return;
-    let cancelled = false;
-    const token = localStorage.getItem('token');
-    fetch(`${API_URL}/api/usuarios?size=500`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const content = (data.content ?? data) as UsuarioApi[];
-        const mapped: StoredUser[] = content.map((u) => ({
-          id: String(u.id),
-          cpf: u.cpf ?? '',
-          nome: u.nome ?? '',
-          email: u.email ?? '',
-          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
-          turno: (u as { turno?: string }).turno as StoredUser['turno'] | undefined,
-          status: u.ativo ? 'ativo' : 'inativo',
-          turmas: (u as { turmas?: string[] }).turmas ?? [],
-        }));
-        setUsuarios(mapped);
-      })
-      .catch(() => null);
-    return () => {
-      cancelled = true;
-    };
+    const keysOffline = [
+      disciplinasStorageKey,
+      turmasStorageKey,
+      usersStorageKey,
+      vinculosStorageKey,
+      aulasStorageKey,
+      coresStorageKey,
+    ];
+    if (isApiEnabled()) {
+      void Promise.all([
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listUsuariosApi(),
+        listGradeAulasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(([disciplinasApi, turmasApi, usuariosApi, gradeRows, vincRows]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+            cor: d.cor ?? undefined,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status === 'Inativa' ? 'Inativa' : 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: '',
+            proximaAula: '',
+          }));
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: roleToPerfil(String(u.role ?? 'ROLE_ALUNO')),
+            turno: undefined,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          const aulasMapped: AulaCadastrada[] = gradeRows
+            .filter((r) => r.disciplinaId != null && r.turmaId != null)
+            .map((r) => ({
+              id: String(r.id ?? createId('aula')),
+              disciplinaId: String(r.disciplinaId),
+              turmaId: String(r.turmaId),
+              dia: r.dia ?? '',
+              inicio: r.inicio ?? '',
+              fim: r.fim ?? '',
+            }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(usersStorageKey, usuariosMapped);
+          setDisciplinas(disciplinasMapped);
+          setTurmas(turmasMapped);
+          setUsuarios(usuariosMapped);
+          setVinculos(vincRows as DisciplinaVinculo[]);
+          setAulas(aulasMapped);
+        })
+        .catch(() => null);
+      return;
+    }
+    void syncKeysFromBackend(keysOffline).finally(() => {
+      setDisciplinas(
+        loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+      );
+      setTurmas(loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas));
+      setUsuarios(loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+      setAulas(loadFromStorage<AulaCadastrada[]>(aulasStorageKey, []));
+    });
   }, []);
 
   const handleAddDisciplina = () => {
@@ -190,13 +232,34 @@ const DisciplinasCadastroHorarios: React.FC = () => {
       window.alert('Disciplina ja cadastrada.');
       return;
     }
-    const nova: CatalogItem = { id: createId('disciplina'), nome };
-    const updated = [nova, ...disciplinas];
-    const coresUpdated = { ...coresDisciplinas, [nova.id]: corSelecionada };
-    setDisciplinas(updated);
-    setCoresDisciplinas(coresUpdated);
-    saveToStorage(disciplinasStorageKey, updated);
-    saveToStorage(coresStorageKey, coresUpdated);
+    const addLocal = () => {
+      const nova: CatalogItem = { id: createId('disciplina'), nome, cor: corSelecionada };
+      const updated = [nova, ...disciplinas];
+      setDisciplinas(updated);
+      saveToStorage(disciplinasStorageKey, updated);
+      saveToStorage(coresStorageKey, {
+        ...Object.fromEntries(disciplinas.map((d) => [d.id, d.cor && d.cor.trim() ? d.cor : 'blue'])),
+        [nova.id]: corSelecionada,
+      });
+    };
+    if (isApiEnabled()) {
+      void saveDisciplinaApi({ nome, cor: corSelecionada })
+        .then((saved) => {
+          const nova: CatalogItem = {
+            id: String(saved.id ?? createId('disciplina')),
+            nome: saved.nome ?? nome,
+            cor: saved.cor ?? corSelecionada,
+          };
+          const updated = [nova, ...disciplinas.filter((d) => d.id !== nova.id)];
+          setDisciplinas(updated);
+          saveToStorage(disciplinasStorageKey, updated);
+        })
+        .catch(() => {
+          window.alert('Não foi possível salvar a disciplina. Verifique a API e tente novamente.');
+        });
+    } else {
+      addLocal();
+    }
     setNomeDisciplina('');
   };
 
@@ -250,23 +313,58 @@ const DisciplinasCadastroHorarios: React.FC = () => {
       }
     }
 
-    const nova: AulaCadastrada = {
-      id: createId('aula'),
-      disciplinaId: disciplinaAulaId,
-      turmaId: turmaAulaId,
-      dia: diaAula,
-      inicio: inicioAula,
-      fim: fimAula,
+    const createLocalAula = () => {
+      const nova: AulaCadastrada = {
+        id: createId('aula'),
+        disciplinaId: disciplinaAulaId,
+        turmaId: turmaAulaId,
+        dia: diaAula,
+        inicio: inicioAula,
+        fim: fimAula,
+      };
+      const updated = [...aulas, nova];
+      setAulas(updated);
+      saveToStorage(aulasStorageKey, updated);
     };
-    const updated = [...aulas, nova];
-    setAulas(updated);
-    saveToStorage(aulasStorageKey, updated);
+    if (isApiEnabled()) {
+      const disciplinaIdNum = Number(disciplinaAulaId);
+      const turmaIdNum = Number(turmaAulaId);
+      if (Number.isFinite(disciplinaIdNum) && Number.isFinite(turmaIdNum)) {
+        void saveGradeAulaApi({
+          disciplinaId: disciplinaIdNum,
+          turmaId: turmaIdNum,
+          dia: diaAula,
+          inicio: inicioAula,
+          fim: fimAula,
+        })
+          .then((saved) => {
+            const nova: AulaCadastrada = {
+              id: String(saved.id ?? createId('aula')),
+              disciplinaId: disciplinaAulaId,
+              turmaId: turmaAulaId,
+              dia: diaAula,
+              inicio: inicioAula,
+              fim: fimAula,
+            };
+            setAulas([...aulas, nova]);
+          })
+          .catch(() => {
+            window.alert('Não foi possível salvar a aula. Verifique a API e tente novamente.');
+          });
+      } else {
+        window.alert('Não foi possível salvar a aula. IDs inválidos.');
+        return;
+      }
+    } else {
+      createLocalAula();
+    }
 
-    // Mantem Disciplinas sincronizada: se professor ja foi escolhido,
-    // grava/atualiza o vinculo da disciplina no mesmo fluxo do cadastro de aula.
     if (professorId) {
       const turmaNome = turmas.find((t) => t.id === turmaAulaId)?.nome ?? '';
       const professorNome = professores.find((p) => p.id === professorId)?.nome ?? '';
+      const disciplinaIdNum = Number(disciplinaAulaId);
+      const turmaIdNum = Number(turmaAulaId);
+      const professorNum = Number(professorId);
       if (turmaNome && professorNome) {
         const existente = vinculos.find(
           (v) => v.disciplinaId === disciplinaAulaId && v.turmaId === turmaAulaId,
@@ -285,7 +383,26 @@ const DisciplinasCadastroHorarios: React.FC = () => {
             )
           : [...vinculos, novo];
         setVinculos(updatedVinculos);
-        saveToStorage(vinculosStorageKey, updatedVinculos);
+        if (
+          isApiEnabled() &&
+          Number.isFinite(disciplinaIdNum) &&
+          Number.isFinite(turmaIdNum) &&
+          Number.isFinite(professorNum)
+        ) {
+          void saveDisciplinaTurmaApi({
+            disciplinaId: disciplinaIdNum,
+            turmaId: turmaIdNum,
+            professorId: professorNum,
+          })
+            .then(() => loadVinculosDisciplinaTurma().then((rows) => setVinculos(rows as DisciplinaVinculo[])))
+            .catch(() => {
+              window.alert('Não foi possível vincular o professor. Verifique a API e tente novamente.');
+            });
+        } else if (!isApiEnabled()) {
+          saveToStorage(vinculosStorageKey, updatedVinculos);
+        } else {
+          window.alert('Não foi possível vincular o professor. IDs inválidos.');
+        }
       }
     }
 
@@ -406,7 +523,7 @@ const DisciplinasCadastroHorarios: React.FC = () => {
                 <SelectContent>
                   {turmas.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
-                      {t.nome} ({t.turno})
+                      {t.nome} ({rotuloTurnoParaExibicao(t)})
                     </SelectItem>
                   ))}
                 </SelectContent>

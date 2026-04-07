@@ -19,6 +19,9 @@
     <include file="config/liquibase/changelog/00000000000023_user_storage.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/00000000000024_provas_relacional.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/00000000000025_nota_componentes.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/00000000000026_relacional_instituicao_grade_vinculos.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/00000000000027_nota_lancamento_cabecalho.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/00000000000028_turno_catalog_turma.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-changelog - JHipster will add liquibase changelogs here -->
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->

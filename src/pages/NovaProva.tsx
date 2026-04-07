@@ -12,6 +12,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listPeriodosApi,
+  listTurmasApi,
+  saveProvaApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
+import {
   CatalogItem,
   defaultDisciplinas,
   defaultPeriodos,
@@ -105,16 +114,18 @@ const NovaProva: React.FC = () => {
   ]);
 
   const [disciplinasDisponiveis, setDisciplinasDisponiveis] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [turmasDisponiveis, setTurmasDisponiveis] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
   );
   const [periodosDisponiveis, setPeriodosDisponiveis] = useState<CatalogItem[]>(() =>
-    periodosParaSelecao(loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos)),
+    periodosParaSelecao(
+      loadFromStorage<CatalogItem[]>(periodosStorageKey, isApiEnabled() ? [] : defaultPeriodos),
+    ),
   );
   const instituicao = useMemo(() => {
     const dados = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
@@ -123,6 +134,45 @@ const NovaProva: React.FC = () => {
 
   useEffect(() => {
     const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey, periodosStorageKey];
+    if (isApiEnabled()) {
+      void Promise.all([listDisciplinasApi(), listTurmasApi(), listPeriodosApi()])
+        .then(([disciplinasApi, turmasApi, periodosApi]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status === 'Inativa' ? 'Inativa' : 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: '',
+            proximaAula: '',
+          }));
+          const periodosMapped: CatalogItem[] = periodosApi.map((p) => ({
+            id: String(p.id ?? ''),
+            nome: p.nome ?? `Periodo ${p.id ?? ''}`,
+          }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(periodosStorageKey, periodosMapped);
+          setDisciplinasDisponiveis(disciplinasMapped);
+          setTurmasDisponiveis(turmasMapped);
+          setPeriodosDisponiveis(periodosParaSelecao(periodosMapped));
+          void loadVinculosDisciplinaTurma()
+            .then((rows) => setVinculos(rows as DisciplinaVinculo[]))
+            .catch(() => setVinculos([]));
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar disciplinas, turmas e períodos. Verifique a API e tente novamente.');
+          setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []));
+          setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, []));
+          setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+          setPeriodosDisponiveis(periodosParaSelecao(loadFromStorage<CatalogItem[]>(periodosStorageKey, [])));
+        });
+      return;
+    }
     void syncKeysFromBackend(keys).finally(() => {
       setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
       setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
@@ -168,7 +218,8 @@ const NovaProva: React.FC = () => {
   }, [disciplinaId, disciplinasDisponiveis, professorVinculos, turmasDisponiveis]);
 
   const turnoPorTurma = useMemo(
-    () => Object.fromEntries(turmasDisponiveis.map((t) => [t.id, t.turno] as const)),
+    () =>
+      Object.fromEntries(turmasDisponiveis.map((t) => [t.id, rotuloTurnoParaExibicao(t)] as const)),
     [turmasDisponiveis],
   );
 
@@ -232,6 +283,8 @@ const NovaProva: React.FC = () => {
       opcoes: questao.alternativas,
       corretaIndex: questao.tipo === 'dissertativa' ? null : questao.corretaIndex,
     }));
+    const turmaIdNum = Number(turmaId);
+    const disciplinaIdNum = Number(disciplinaId);
 
     const stored = loadFromStorage<Prova[]>(provasStorageKey, []);
     const provaLocal: Prova = {
@@ -254,10 +307,12 @@ const NovaProva: React.FC = () => {
 
     if (isProvasRelacionalEnabled()) {
       try {
-        const created = await createProvaRelacional({
+        await createProvaRelacional({
           professorId: Number(user?.id),
           professorNome: user?.nome ?? '',
+          turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : undefined,
           turmaNome,
+          disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : undefined,
           disciplinaNome,
           titulo,
           descricao: instrucoes,
@@ -276,15 +331,45 @@ const NovaProva: React.FC = () => {
             corretaIndex: q.corretaIndex,
           })),
         });
-        const provaEspelho = {
-          ...provaLocal,
-          id: created.id ? String(created.id) : provaLocal.id,
-        };
-        saveToStorage(provasStorageKey, [provaEspelho, ...stored.filter((p) => p.id !== provaEspelho.id)]);
         navigate('/provas');
         return;
       } catch {
-        // fallback local para não bloquear operação
+        window.alert('Nao foi possivel salvar a prova no servidor relacional.');
+        return;
+      }
+    }
+
+    if (isApiEnabled()) {
+      try {
+        await saveProvaApi({
+          id: undefined,
+          data,
+          horario: duracao,
+          titulo,
+          status: 'Agendada',
+          descricao: JSON.stringify({
+            sala: '',
+            questoes: questoesFormatadas,
+            turno,
+            periodo,
+            instrucoes,
+            professorId: user?.id ?? '',
+            professorNome: user?.nome ?? '',
+          }),
+          turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
+          disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
+          periodo,
+          instrucoes,
+          publicada: true,
+          ativa: true,
+          professorId: Number.isFinite(Number(user?.id)) ? Number(user?.id) : null,
+          turno,
+        });
+        navigate('/provas');
+        return;
+      } catch {
+        window.alert('Nao foi possivel salvar a prova no servidor.');
+        return;
       }
     }
 

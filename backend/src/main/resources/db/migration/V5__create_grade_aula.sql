@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS grade_aula (
+    id BIGSERIAL PRIMARY KEY,
+    disciplina_id BIGINT NOT NULL REFERENCES disciplina(id) ON DELETE CASCADE,
+    turma_id BIGINT NOT NULL REFERENCES turma(id) ON DELETE CASCADE,
+    dia VARCHAR(32) NOT NULL,
+    inicio VARCHAR(8) NOT NULL,
+    fim VARCHAR(8) NOT NULL
+);

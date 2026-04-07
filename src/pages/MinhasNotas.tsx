@@ -113,8 +113,11 @@ const MinhasNotas: React.FC = () => {
   const [storageTick, setStorageTick] = useState(0);
   const [respostasProvasApi, setRespostasProvasApi] = useState<MinhaRespostaComProva[]>([]);
   const [notasRelAluno, setNotasRelAluno] = useState<NotaLancamentoRelApi[]>([]);
+  const [falhaProvasRel, setFalhaProvasRel] = useState(false);
+  const [falhaNotasRel, setFalhaNotasRel] = useState(false);
 
   useEffect(() => {
+    if (isNotasRelacionalEnabled() || isProvasRelacionalEnabled()) return;
     void syncKeysFromBackend([
       notasAlunosStorageKey,
       minhasNotasLegadoKey,
@@ -132,29 +135,45 @@ const MinhasNotas: React.FC = () => {
   useEffect(() => {
     if (!isProvasRelacionalEnabled() || !uid) {
       setRespostasProvasApi([]);
+      setFalhaProvasRel(false);
       return;
     }
+    setFalhaProvasRel(false);
     void listMinhasRespostasComContexto(uid)
       .then(setRespostasProvasApi)
-      .catch(() => setRespostasProvasApi([]));
+      .catch(() => {
+        setFalhaProvasRel(true);
+        setRespostasProvasApi([]);
+      });
   }, [uid]);
 
   useEffect(() => {
     if (!isNotasRelacionalEnabled() || !uid) {
       setNotasRelAluno([]);
+      setFalhaNotasRel(false);
       return;
     }
+    setFalhaNotasRel(false);
     void listNotasRelacionalPorAluno(uid)
       .then(setNotasRelAluno)
-      .catch(() => setNotasRelAluno([]));
+      .catch(() => {
+        setFalhaNotasRel(true);
+        setNotasRelAluno([]);
+      });
   }, [uid]);
 
   const periodoPorProvaId = useMemo(() => {
+    if (isProvasRelacionalEnabled() && !falhaProvasRel) {
+      return new Map<string, string>();
+    }
     const provas = loadFromStorage<Array<{ id: string; periodo?: string }>>(provasStorageKey, []);
     return new Map(provas.map((p) => [String(p.id), (p.periodo ?? '').trim()]));
-  }, [storageTick]);
+  }, [storageTick, falhaProvasRel]);
 
   const respostasProvasLocais = useMemo(() => {
+    if (isProvasRelacionalEnabled() && !falhaProvasRel) {
+      return [] as MinhaRespostaComProva[];
+    }
     if (!user) return [] as MinhaRespostaComProva[];
     const idNorm = uid ? normalizeText(uid) : '';
     const nomeNorm = user.nome ? normalizeText(user.nome) : '';
@@ -180,9 +199,15 @@ const MinhasNotas: React.FC = () => {
           corrigido,
         };
       });
-  }, [user, uid, storageTick, periodoPorProvaId]);
+  }, [user, uid, storageTick, periodoPorProvaId, falhaProvasRel]);
 
   const todasRespostasProvaAluno = useMemo(() => {
+    if (isProvasRelacionalEnabled() && !falhaProvasRel) {
+      return respostasProvasApi.map((r) => ({
+        ...r,
+        periodo: (r.periodo?.trim() || periodoPorProvaId.get(String(r.provaId)) || '').trim(),
+      }));
+    }
     const map = new Map<string, MinhaRespostaComProva>();
     const enriquecer = (r: MinhaRespostaComProva): MinhaRespostaComProva => ({
       ...r,
@@ -191,7 +216,7 @@ const MinhasNotas: React.FC = () => {
     respostasProvasLocais.forEach((r) => map.set(r.provaId, enriquecer(r)));
     respostasProvasApi.forEach((r) => map.set(r.provaId, enriquecer(r)));
     return Array.from(map.values());
-  }, [respostasProvasLocais, respostasProvasApi, periodoPorProvaId]);
+  }, [respostasProvasLocais, respostasProvasApi, periodoPorProvaId, falhaProvasRel]);
 
   const gruposNotaProva = useMemo(() => {
     const acc = new Map<
@@ -246,6 +271,9 @@ const MinhasNotas: React.FC = () => {
       provasNota: n.provasNota ?? null,
       nota: n.nota ?? null,
     }));
+    if (isNotasRelacionalEnabled() && !falhaNotasRel) {
+      return rel;
+    }
     const byKey = new Map<string, NotaAluno>();
     const keyOf = (n: NotaAluno) => chaveGrupoProva(n.disciplina, n.turma, n.bimestre);
     local.forEach((n) => byKey.set(keyOf(n), n));

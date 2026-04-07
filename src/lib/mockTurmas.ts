@@ -5,6 +5,9 @@ export interface Turma {
   id: string;
   nome: string;
   turno: TurmaTurno;
+  /** ID do registro em `turno` (API); no mock local usa 1/2/3 alinhados ao seed. */
+  turnoId?: string;
+  turnoNome?: string;
   alunos: number;
   professor: string;
   status: TurmaStatus;
@@ -13,11 +16,15 @@ export interface Turma {
 
 export const turmasStorageKey = 'school-compass:turmas';
 
-export const defaultTurmas: Turma[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export const defaultTurmas: Turma[] = API_URL ? [] : [
   {
     id: '9A',
     nome: '9º Ano A',
     turno: 'Manha',
+    turnoId: '1',
+    turnoNome: 'Manhã',
     alunos: 32,
     professor: 'Ana Costa',
     status: 'Ativa',
@@ -27,6 +34,8 @@ export const defaultTurmas: Turma[] = [
     id: '9B',
     nome: '9º Ano B',
     turno: 'Manha',
+    turnoId: '1',
+    turnoNome: 'Manhã',
     alunos: 30,
     professor: 'Carlos Mendes',
     status: 'Ativa',
@@ -36,6 +45,8 @@ export const defaultTurmas: Turma[] = [
     id: '8A',
     nome: '8º Ano A',
     turno: 'Manha',
+    turnoId: '1',
+    turnoNome: 'Manhã',
     alunos: 28,
     professor: 'Maria Santos',
     status: 'Ativa',
@@ -45,6 +56,8 @@ export const defaultTurmas: Turma[] = [
     id: '7C',
     nome: '7º Ano C',
     turno: 'Tarde',
+    turnoId: '2',
+    turnoNome: 'Tarde',
     alunos: 26,
     professor: 'Roberto Silva',
     status: 'Planejada',

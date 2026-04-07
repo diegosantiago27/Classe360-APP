@@ -3,7 +3,7 @@ import { BookOpen, Calendar, CheckCircle2, ClipboardList } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { loadFromStorage } from '@/lib/mockStorage';
+import { loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   MateriaAluno,
@@ -12,6 +12,18 @@ import { Link } from 'react-router-dom';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
 import { StoredUser, usersStorageKey } from '@/lib/mockUsers';
+import {
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listFrequenciasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 interface AlunoVinculado {
   alunoId: string;
@@ -72,33 +84,132 @@ const getSerieFromTurma = (turmaNome: string) => {
 
 const MinhasMaterias: React.FC = () => {
   const { user } = useAuth();
+  const [storageTick, setStorageTick] = useState(0);
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      void Promise.all([
+        listUsuariosApi(),
+        listDisciplinasApi(),
+        listTurmasApi(),
+        listAtividadesApi(),
+        listEntregasAtividadesApi(),
+        listFrequenciasApi(),
+        loadVinculosDisciplinaTurma(),
+      ])
+        .then(
+          ([
+            usuariosApi,
+            disciplinasApi,
+            turmasApi,
+            atividadesApi,
+            entregasApi,
+            frequenciasApi,
+            vincRows,
+          ]) => {
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: String(u.role ?? '').includes('PROFESSOR')
+              ? 3
+              : String(u.role ?? '').includes('ADMIN')
+                ? 2
+                : String(u.role ?? '').includes('GESTOR')
+                  ? 1
+                  : String(u.role ?? '').includes('SECRETARIA')
+                    ? 5
+                    : 4,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status ?? 'Ativa',
+            professor: t.professorId ? String(t.professorId) : '',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            proximaAula: '',
+          }));
+          const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+          const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
+          const atividadesMapped: Atividade[] = atividadesApi.map((a) => ({
+            id: String(a.id ?? ''),
+            titulo: a.titulo ?? '',
+            turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
+            disciplina:
+              disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
+          }));
+          const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => ({
+            id: String(e.id ?? ''),
+            atividadeId: String(e.atividadeId ?? ''),
+            alunoId: String(e.alunoId ?? ''),
+          }));
+          const presencasMapped: RegistroPresenca[] = frequenciasApi.map((f) => ({
+            alunoId: String(f.alunoId ?? ''),
+            turma: turmaNomeById.get(String(f.turmaId ?? '')) ?? `Turma ${f.turmaId ?? ''}`,
+            status: f.presente ? 'Presente' : 'Falta',
+          }));
+
+          const usuariosComTurmas = mergeAlunosTurmasFromApi(usuariosMapped, turmasApi);
+          saveToStorage(usersStorageKey, usuariosComTurmas);
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(atividadesStorageKey, atividadesMapped);
+          saveToStorage(entregasStorageKey, entregasMapped);
+          saveToStorage(presencasStorageKey, presencasMapped);
+          saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculo[]);
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar suas matérias. Verifique a API e tente novamente.');
+        })
+        .finally(() => setStorageTick((prev) => prev + 1));
+      return;
+    }
+    void syncKeysFromBackend([
+      usersStorageKey,
+      disciplinasStorageKey,
+      turmasStorageKey,
+      vinculosStorageKey,
+      atividadesStorageKey,
+      entregasStorageKey,
+      presencasStorageKey,
+    ]).finally(() => setStorageTick((prev) => prev + 1));
+  }, []);
+
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, []),
-    [],
+    [storageTick],
   );
   const disciplinas = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
-    [],
+    [storageTick],
   );
   const turmas = useMemo(
     () => loadFromStorage<Turma[]>(turmasStorageKey, []),
-    [],
+    [storageTick],
   );
   const vinculos = useMemo(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
-    [],
+    [storageTick],
   );
   const atividades = useMemo(
     () => loadFromStorage<Atividade[]>(atividadesStorageKey, []),
-    [],
+    [storageTick],
   );
   const entregas = useMemo(
     () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
-    [],
+    [storageTick],
   );
   const presencas = useMemo(
     () => loadFromStorage<RegistroPresenca[]>(presencasStorageKey, []),
-    [],
+    [storageTick],
   );
 
   const alunoAtual = useMemo(

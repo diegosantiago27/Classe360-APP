@@ -20,8 +20,11 @@ import {
 import {
   isNotasRelacionalEnabled,
   listNotasRelacionalLancamentos,
+  listNotasRelacionalResumo,
   patchNotaRelacional,
 } from '@/lib/notasRelApi';
+import { isApiEnabled } from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface Lancamento {
   id: string;
@@ -115,8 +118,9 @@ const NotaTurma: React.FC = () => {
   const podeEditarNotas = user?.perfil !== UserProfile.SECRETARIA;
   const { id } = useParams();
   const location = useLocation();
+  const [lancamentoRelApi, setLancamentoRelApi] = useState<Lancamento | null>(null);
   const lancamentos = useMemo(
-    () => loadFromStorage<Lancamento[]>(lancamentosStorageKey, []),
+    () => (isNotasRelacionalEnabled() ? [] : loadFromStorage<Lancamento[]>(lancamentosStorageKey, [])),
     [],
   );
   const lancamento = useMemo(
@@ -128,7 +132,29 @@ const NotaTurma: React.FC = () => {
     return state?.lancamento ?? null;
   }, [location.state]);
 
-  const lancamentoAtual = lancamento ?? lancamentoFromState;
+  useEffect(() => {
+    if (!isNotasRelacionalEnabled() || !id || lancamentoFromState) {
+      if (!isNotasRelacionalEnabled() || lancamentoFromState) setLancamentoRelApi(null);
+      return;
+    }
+    void listNotasRelacionalResumo()
+      .then((rows) => {
+        const hit = rows.find((r) => r.id === id);
+        if (!hit) {
+          setLancamentoRelApi(null);
+          return;
+        }
+        setLancamentoRelApi({
+          id: hit.id ?? id,
+          turma: hit.turmaNome ?? '',
+          disciplina: hit.disciplinaNome ?? '',
+          bimestre: hit.bimestre ?? '',
+        });
+      })
+      .catch(() => setLancamentoRelApi(null));
+  }, [id, lancamentoFromState]);
+
+  const lancamentoAtual = lancamentoFromState ?? lancamentoRelApi ?? lancamento;
 
   const listFiltersRetorno = useMemo((): NotasListFiltersState => {
     const st = location.state as { listFilters?: NotasListFiltersState } | null;
@@ -151,25 +177,37 @@ const NotaTurma: React.FC = () => {
     };
   }, [location.state, lancamentoAtual]);
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(
-    () => loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
+    () => (isNotasRelacionalEnabled() ? [] : loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, [])),
   );
   const [storageTick, setStorageTick] = useState(0);
   const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaResposta[]>([]);
   const [carregandoNotasRel, setCarregandoNotasRel] = useState(false);
 
   useEffect(() => {
-    const keys = [
+    const keysBase = [
       notasAlunosStorageKey,
       provasRespostasStorageKey,
       provasStorageKey,
       atividadesEntregasStorageKey,
       usersStorageKey,
-      vinculosStorageKey,
       turmasStorageKey,
     ];
+    const keys = isApiEnabled() ? keysBase : [...keysBase, vinculosStorageKey];
     void syncKeysFromBackend(keys).finally(() => {
-      setNotasAlunos(loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []));
+      setNotasAlunos(
+        isNotasRelacionalEnabled() ? [] : loadFromStorage<NotaAluno[]>(notasAlunosStorageKey, []),
+      );
       setStorageTick((t) => t + 1);
+      if (isApiEnabled()) {
+        void loadVinculosDisciplinaTurma()
+          .then((rows) => {
+            if (!isNotasRelacionalEnabled()) {
+              saveToStorage(vinculosStorageKey, rows);
+            }
+            setStorageTick((k) => k + 1);
+          })
+          .catch(() => null);
+      }
     });
   }, []);
 
@@ -232,7 +270,6 @@ const NotaTurma: React.FC = () => {
           const map = new Map<string, NotaAluno>(prev.map((n) => [keyOf(n), n]));
           fromApi.forEach((n) => map.set(keyOf(n), n));
           const merged = Array.from(map.values());
-          saveToStorage(notasAlunosStorageKey, merged);
           return merged;
         });
       })
@@ -357,7 +394,26 @@ const NotaTurma: React.FC = () => {
     if (novasNotas.length === 0) return;
     const updated = [...notasAlunos, ...novasNotas];
     setNotasAlunos(updated);
-    saveToStorage(notasAlunosStorageKey, updated);
+    if (!isNotasRelacionalEnabled()) {
+      saveToStorage(notasAlunosStorageKey, updated);
+    }
+    if (isNotasRelacionalEnabled()) {
+      void Promise.allSettled(
+        novasNotas.map((notaNova) => {
+          const alunoIdNum = Number(notaNova.alunoId);
+          return patchNotaRelacional({
+            alunoId: Number.isFinite(alunoIdNum) ? alunoIdNum : undefined,
+            alunoNome: notaNova.alunoNome,
+            turmaNome: notaNova.turma,
+            disciplinaNome: notaNova.disciplina,
+            bimestre: notaNova.bimestre,
+            trabalhosNota: notaNova.trabalhosNota ?? null,
+            provasNota: notaNova.provasNota ?? null,
+            nota: notaNova.nota ?? null,
+          });
+        }),
+      );
+    }
   }, [alunosTurmaAtual, lancamentoAtual, notasDaTurma, notasAlunos]);
 
   const notasExibidas = useMemo(() => {
@@ -485,7 +541,9 @@ const NotaTurma: React.FC = () => {
       return isTarget ? { ...nota, [field]: normalizedValue } : nota;
     });
     setNotasAlunos(updated);
-    saveToStorage(notasAlunosStorageKey, updated);
+    if (!isNotasRelacionalEnabled()) {
+      saveToStorage(notasAlunosStorageKey, updated);
+    }
 
     if (isNotasRelacionalEnabled()) {
       const row = updated.find(
@@ -507,7 +565,7 @@ const NotaTurma: React.FC = () => {
         provasNota: field === 'provasNota' ? normalizedValue : row?.provasNota ?? null,
         nota: field === 'nota' ? normalizedValue : row?.nota ?? null,
       }).catch(() => {
-        // mantém fallback local quando API indisponível
+        window.alert('Não foi possível salvar a nota. Verifique a API e tente novamente.');
       });
     }
   };

@@ -14,7 +14,9 @@ export interface MateriaAluno {
 
 export const materiasAlunoStorageKey = 'school-compass:minhas-materias';
 
-export const defaultMateriasAluno: MateriaAluno[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export const defaultMateriasAluno: MateriaAluno[] = API_URL ? [] : [
   {
     id: 'MAT-9A',
     disciplina: 'Matematica',

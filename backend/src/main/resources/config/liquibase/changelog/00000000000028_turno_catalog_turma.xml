@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000028-1" author="classe360">
+        <createTable tableName="turno">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="codigo" type="varchar(32)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="nome" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="00000000000028-2" author="classe360">
+        <insert tableName="turno">
+            <column name="codigo" value="MANHA"/>
+            <column name="nome" value="Manhã"/>
+        </insert>
+        <insert tableName="turno">
+            <column name="codigo" value="TARDE"/>
+            <column name="nome" value="Tarde"/>
+        </insert>
+        <insert tableName="turno">
+            <column name="codigo" value="NOITE"/>
+            <column name="nome" value="Noite"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="00000000000028-3" author="classe360">
+        <addColumn tableName="turma">
+            <column name="turno_id" type="bigint"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000028-4" author="classe360">
+        <sql>
+            UPDATE turma SET turno_id = (SELECT id FROM turno WHERE codigo = 'MANHA' LIMIT 1)
+            WHERE turno_id IS NULL AND (
+                LOWER(TRIM(turno)) IN ('manha', 'manhã')
+                OR turno IS NULL
+                OR TRIM(COALESCE(turno, '')) = ''
+            );
+            UPDATE turma SET turno_id = (SELECT id FROM turno WHERE codigo = 'TARDE' LIMIT 1)
+            WHERE turno_id IS NULL AND LOWER(TRIM(turno)) IN ('tarde');
+            UPDATE turma SET turno_id = (SELECT id FROM turno WHERE codigo = 'NOITE' LIMIT 1)
+            WHERE turno_id IS NULL AND LOWER(TRIM(turno)) IN ('noite');
+            UPDATE turma SET turno_id = (SELECT id FROM turno WHERE codigo = 'MANHA' LIMIT 1)
+            WHERE turno_id IS NULL;
+        </sql>
+    </changeSet>
+
+    <changeSet id="00000000000028-5" author="classe360">
+        <addNotNullConstraint tableName="turma" columnName="turno_id" columnDataType="bigint"/>
+    </changeSet>
+
+    <changeSet id="00000000000028-6" author="classe360">
+        <addForeignKeyConstraint
+            baseTableName="turma"
+            baseColumnNames="turno_id"
+            constraintName="fk_turma_turno"
+            referencedTableName="turno"
+            referencedColumnNames="id"/>
+    </changeSet>
+
+    <changeSet id="00000000000028-7" author="classe360">
+        <dropColumn tableName="turma" columnName="turno"/>
+    </changeSet>
+</databaseChangeLog>

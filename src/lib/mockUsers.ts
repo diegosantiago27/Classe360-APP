@@ -24,7 +24,10 @@ export interface StoredUser {
 
 export const usersStorageKey = 'school-compass:usuarios';
 
-export const defaultUsers: StoredUser[] = [
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+// Em modo profissional (backend ativo), não usamos dados fictícios.
+export const defaultUsers: StoredUser[] = API_URL ? [] : [
   { id: '1', nome: 'Maria Silva', email: 'maria@escola.com', cpf: '111.111.111-11', perfil: UserProfile.GESTOR, status: 'ativo' },
   { id: '2', nome: 'João Santos', email: 'joao@escola.com', cpf: '222.222.222-22', perfil: UserProfile.ADMINISTRADOR, status: 'ativo' },
   {

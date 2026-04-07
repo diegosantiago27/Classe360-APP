@@ -80,10 +80,6 @@ export default function ProvasAluno() {
     if (isProvasRelacionalEnabled() && user?.id) {
       void listProvasRelacionalParaAluno(user.id)
         .then((rows) => {
-          if (rows.length === 0) {
-            void loadLocalData();
-            return;
-          }
           setProvas(rows.map((r) => ({ ...mapRelApiToStorageShape(r), sala: '' })));
         })
         .catch(() => {
@@ -97,7 +93,7 @@ export default function ProvasAluno() {
   useEffect(() => {
     if (!isProvasRelacionalEnabled() || !user?.id || provas.length === 0) return;
     void (async () => {
-      const fetched = await Promise.all(
+      const fetched = await Promise.allSettled(
         provas.map(async (prova) => {
           const r = await getMinhaRespostaRelacional(prova.id, user.id);
           if (!r) return null;
@@ -109,7 +105,11 @@ export default function ProvasAluno() {
           } as ProvaResposta;
         }),
       );
-      setRespostas(fetched.filter((x): x is ProvaResposta => Boolean(x)));
+      const resolved = fetched
+        .filter((item): item is PromiseFulfilledResult<ProvaResposta | null> => item.status === 'fulfilled')
+        .map((item) => item.value)
+        .filter((x): x is ProvaResposta => Boolean(x));
+      setRespostas(resolved);
     })();
   }, [provas, user?.id]);
 

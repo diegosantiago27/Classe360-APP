@@ -7,6 +7,18 @@ const getToken = () => {
 
 const isBackendAuthoritativeKey = (key: string) => key.startsWith('school-compass:');
 
+/** Dados com tabelas próprias no PostgreSQL — não replicar no storage genérico. */
+const KEYS_SKIP_STORAGE_PUSH = new Set([
+  'school-compass:disciplinas-vinculos',
+  'school-compass:disciplinas-cores',
+  'school-compass:grade-aulas',
+  'school-compass:notas',
+  'school-compass:notas-alunos',
+  'school-compass:provas',
+  'school-compass:provas-respostas',
+  'school-compass:provas-sessoes',
+]);
+
 const getEmptyLikeFallback = <T>(fallback: T): T => {
   if (Array.isArray(fallback)) return [] as T;
   if (fallback && typeof fallback === 'object') return {} as T;
@@ -14,6 +26,7 @@ const getEmptyLikeFallback = <T>(fallback: T): T => {
 };
 
 const pushToBackend = async (key: string, value: unknown) => {
+  if (KEYS_SKIP_STORAGE_PUSH.has(key)) return;
   if (!API_URL) return;
   const token = getToken();
   if (!token) return;

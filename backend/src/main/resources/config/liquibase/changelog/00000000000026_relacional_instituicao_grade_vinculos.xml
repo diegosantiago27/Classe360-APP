@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000026-1" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="instituicao"/>
+            </not>
+        </preConditions>
+        <createTable tableName="instituicao">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="cnpj" type="varchar(32)"/>
+            <column name="telefone" type="varchar(32)"/>
+            <column name="email" type="varchar(255)"/>
+            <column name="endereco" type="varchar(255)"/>
+            <column name="numero" type="varchar(32)"/>
+            <column name="complemento" type="varchar(255)"/>
+            <column name="bairro" type="varchar(255)"/>
+            <column name="cidade" type="varchar(255)"/>
+            <column name="estado" type="varchar(8)"/>
+            <column name="cep" type="varchar(16)"/>
+        </createTable>
+        <sql>INSERT INTO instituicao (id, nome, cnpj, telefone, email, endereco, numero, complemento, bairro, cidade, estado, cep)
+            SELECT 1, 'Escola Classe 360', '', '', 'contato@classe360.com', '', '', '', '', '', '', ''
+            WHERE NOT EXISTS (SELECT 1 FROM instituicao)</sql>
+        <sql>SELECT setval(pg_get_serial_sequence('instituicao', 'id'), COALESCE((SELECT MAX(id) FROM instituicao), 1))</sql>
+    </changeSet>
+
+    <changeSet id="00000000000026-2" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="preferencia_usuario"/>
+            </not>
+        </preConditions>
+        <createTable tableName="preferencia_usuario">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="usuario_id" type="bigint">
+                <constraints nullable="false" unique="true" foreignKeyName="fk_pref_usuario" references="usuario(id)"/>
+            </column>
+            <column name="notificacoes" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="emails" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="modo_escuro" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="duplo_fator" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="00000000000026-3" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="grade_aula"/>
+            </not>
+        </preConditions>
+        <createTable tableName="grade_aula">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_grade_aula_disciplina" references="disciplina(id)"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_grade_aula_turma" references="turma(id)"/>
+            </column>
+            <column name="dia" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="inicio" type="varchar(8)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="fim" type="varchar(8)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="00000000000026-4" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="disciplina" columnName="cor"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="disciplina">
+            <column name="cor" type="varchar(32)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000026-5" author="classe360">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="disciplina_turma"/>
+            </not>
+        </preConditions>
+        <createTable tableName="disciplina_turma">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="disciplina_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_disc_turma_disciplina" references="disciplina(id)"/>
+            </column>
+            <column name="turma_id" type="bigint">
+                <constraints nullable="false" foreignKeyName="fk_disc_turma_turma" references="turma(id)"/>
+            </column>
+            <column name="professor_id" type="bigint">
+                <constraints nullable="true" foreignKeyName="fk_disc_turma_professor" references="usuario(id)"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="disciplina_turma" columnNames="disciplina_id, turma_id" constraintName="uk_disciplina_turma_par"/>
+    </changeSet>
+</databaseChangeLog>

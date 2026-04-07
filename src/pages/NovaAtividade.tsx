@@ -15,6 +15,14 @@ import { CatalogItem, defaultDisciplinas, disciplinasStorageKey } from '@/lib/mo
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
+import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listTurmasApi,
+  saveAtividadeApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
 
 type TipoQuestao = 'multipla' | 'dissertativa' | 'verdadeiro-falso';
 
@@ -107,10 +115,10 @@ const NovaAtividade: React.FC = () => {
   ]);
 
   const [disciplinasDisponiveis, setDisciplinasDisponiveis] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
   );
   const [turmasDisponiveis, setTurmasDisponiveis] = useState<Turma[]>(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
   const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
@@ -122,6 +130,38 @@ const NovaAtividade: React.FC = () => {
 
   useEffect(() => {
     const keys = [disciplinasStorageKey, turmasStorageKey, vinculosStorageKey];
+    if (isApiEnabled()) {
+      void Promise.all([listDisciplinasApi(), listTurmasApi()])
+        .then(([disciplinasApi, turmasApi]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status === 'Inativa' ? 'Inativa' : 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: '',
+            proximaAula: '',
+          }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          setDisciplinasDisponiveis(disciplinasMapped);
+          setTurmasDisponiveis(turmasMapped);
+          void loadVinculosDisciplinaTurma()
+            .then((rows) => setVinculos(rows as DisciplinaVinculo[]))
+            .catch(() => setVinculos([]));
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar disciplinas e turmas. Verifique a API e tente novamente.');
+          setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []));
+          setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, []));
+          setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+        });
+      return;
+    }
     void syncKeysFromBackend(keys).finally(() => {
       setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas));
       setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
@@ -160,7 +200,8 @@ const NovaAtividade: React.FC = () => {
     );
   }, [disciplinaId, disciplinasDisponiveis, professorVinculos, turmasDisponiveis]);
   const turnoPorTurma = useMemo(
-    () => Object.fromEntries(turmasDisponiveis.map((t) => [t.id, t.turno] as const)),
+    () =>
+      Object.fromEntries(turmasDisponiveis.map((t) => [t.id, rotuloTurnoParaExibicao(t)] as const)),
     [turmasDisponiveis],
   );
 
@@ -201,7 +242,7 @@ const NovaAtividade: React.FC = () => {
     );
   };
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     if (!disciplinaId || !turmaId || !data || !titulo.trim()) {
@@ -249,6 +290,42 @@ const NovaAtividade: React.FC = () => {
       questoes: questoesFormatadas,
       status: 'Pendente',
     };
+
+    if (isApiEnabled()) {
+      try {
+        const turmaIdNum = Number(turmaId);
+        const disciplinaIdNum = Number(disciplinaId);
+        await saveAtividadeApi({
+          id: undefined,
+          titulo,
+          turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
+          disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
+          dataEntrega: dataLimite || data,
+          descricao: JSON.stringify({
+            descricao: instrucoes,
+            periodo: 'Periodo',
+            sala: '',
+            horario: '',
+            instrucoes,
+            status: 'Pendente',
+            questoes: questoesFormatadas,
+            professorId: user?.id ?? '',
+            professorNome: user?.nome ?? '',
+            valeNota,
+            pontuacaoTotal: Number(pontuacaoTotal),
+            peso: Number(peso),
+            dataLiberacao,
+            dataLimite,
+            turno,
+          }),
+        });
+        navigate('/atividades');
+        return;
+      } catch {
+        window.alert('Nao foi possivel salvar a atividade no servidor.');
+        return;
+      }
+    }
 
     saveToStorage(storageKey, [atividade, ...stored]);
     navigate('/atividades');

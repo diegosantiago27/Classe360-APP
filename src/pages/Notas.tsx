@@ -18,6 +18,21 @@ import {
   listProvasRelacionalParaProfessor,
   listRespostasRelacionalParaProfessor,
 } from '@/lib/provasRelApi';
+import {
+  isApiEnabled,
+  listDisciplinasApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
+import { mapTurnoFieldsFromTurmaApi, rotuloTurnoParaExibicao } from '@/lib/turnosCatalog';
+import {
+  createNotaLancamentoCabecalhoRel,
+  deleteNotaLancamentoCabecalhoRel,
+  isNotasRelacionalEnabled,
+  listNotasRelacionalResumo,
+  type NotaLancamentoResumoApi,
+} from '@/lib/notasRelApi';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { CatalogItem, disciplinasStorageKey } from '@/lib/mockAcademics';
 import { Turma, turmasStorageKey } from '@/lib/mockTurmas';
@@ -32,6 +47,15 @@ interface Lancamento {
   pendentes: number;
   status: LancamentoStatus;
 }
+
+const mapResumoApiToLancamento = (r: NotaLancamentoResumoApi): Lancamento => ({
+  id: r.id ?? '',
+  turma: r.turmaNome ?? '',
+  disciplina: r.disciplinaNome ?? '',
+  bimestre: r.bimestre ?? '',
+  pendentes: typeof r.pendentes === 'number' ? r.pendentes : 0,
+  status: r.status === 'Concluida' ? 'Concluida' : 'Pendente',
+});
 
 interface DisciplinaVinculo {
   disciplinaId: string;
@@ -111,8 +135,8 @@ const Notas: React.FC = () => {
     String((user as { role?: unknown } | null)?.role ?? '').toUpperCase() === 'ROLE_PROFESSOR';
   const somenteConsulta =
     user?.perfil === UserProfile.SECRETARIA || user?.perfil === UserProfile.PROFESSOR;
-  const [lancamentos, setLancamentos] = useState<Lancamento[]>(
-    () => loadFromStorage<Lancamento[]>(storageKey, []),
+  const [lancamentos, setLancamentos] = useState<Lancamento[]>(() =>
+    isNotasRelacionalEnabled() ? [] : loadFromStorage<Lancamento[]>(storageKey, []),
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -128,24 +152,21 @@ const Notas: React.FC = () => {
   const [turmaSelecionada, setTurmaSelecionada] = useState<string>('todas');
   const [busca, setBusca] = useState('');
   const [statusSelecionado, setStatusSelecionado] = useState<'todos' | 'pendentes' | 'completos'>('todos');
-  const disciplinasDisponiveis = useMemo(
+  const [disciplinasDisponiveis, setDisciplinasDisponiveis] = useState<CatalogItem[]>(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []),
-    [],
   );
-  const turmasDisponiveis = useMemo(
+  const [turmasDisponiveis, setTurmasDisponiveis] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, []),
-    [],
   );
-  const vinculos = useMemo(
+  const [vinculos, setVinculos] = useState<DisciplinaVinculo[]>(
     () => loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []),
-    [],
   );
   const professorVinculos = useMemo(() => {
     if (!ehProfessor || !user?.id) return [];
     return vinculos.filter((v) => normalizeText(v.professorId) === normalizeText(user.id));
   }, [ehProfessor, user?.id, vinculos]);
   const turnoPorTurma = useMemo(
-    () => new Map(turmasDisponiveis.map((turma) => [turma.nome, turma.turno])),
+    () => new Map(turmasDisponiveis.map((turma) => [turma.nome, rotuloTurnoParaExibicao(turma)])),
     [turmasDisponiveis],
   );
   const disciplinaNomePorId = useMemo(
@@ -173,6 +194,9 @@ const Notas: React.FC = () => {
     return fallback?.nome ?? turmaNomeVinculo ?? turmaIdOuNome;
   };
   const lancamentosCompletos = useMemo(() => {
+    if (isNotasRelacionalEnabled()) {
+      return lancamentos;
+    }
     const existentes = [...lancamentos];
     const existentesKeys = new Set(
       existentes.map(
@@ -209,15 +233,75 @@ const Notas: React.FC = () => {
   const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaRespostaStorage[]>([]);
 
   useEffect(() => {
-    void syncKeysFromBackend([
+    const keys = [
       notasAlunosStorageKey,
       provasRespostasStorageKey,
       provasStorageKey,
       atividadesEntregasStorageKey,
       usersStorageKey,
-      vinculosStorageKey,
       turmasStorageKey,
-    ]).finally(() => setStorageTick((t) => t + 1));
+      disciplinasStorageKey,
+    ];
+    const keysOffline = [...keys, vinculosStorageKey];
+    if (isApiEnabled()) {
+      void Promise.all([listUsuariosApi(), listDisciplinasApi(), listTurmasApi()])
+        .then(([usuariosApi, disciplinasApi, turmasApi]) => {
+          const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+            id: String(d.id ?? ''),
+            nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+            cor: d.cor ?? undefined,
+          }));
+          const turmasMapped: Turma[] = turmasApi.map((t) => ({
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            ...mapTurnoFieldsFromTurmaApi(t),
+            status: t.status === 'Inativa' ? 'Inativa' : 'Ativa',
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: '',
+            proximaAula: '',
+          }));
+          const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+            id: String(u.id ?? ''),
+            cpf: u.cpf ?? '',
+            nome: u.nome ?? '',
+            email: u.email ?? '',
+            perfil: String(u.role ?? '').includes('PROFESSOR')
+              ? UserProfile.PROFESSOR
+              : String(u.role ?? '').includes('ADMIN')
+                ? UserProfile.ADMINISTRADOR
+                : String(u.role ?? '').includes('GESTOR')
+                  ? UserProfile.GESTOR
+                  : String(u.role ?? '').includes('SECRETARIA')
+                    ? UserProfile.SECRETARIA
+                    : UserProfile.ALUNO,
+            status: u.ativo === false ? 'inativo' : 'ativo',
+            turmas: [],
+          }));
+          saveToStorage(disciplinasStorageKey, disciplinasMapped);
+          saveToStorage(turmasStorageKey, turmasMapped);
+          saveToStorage(usersStorageKey, usuariosMapped);
+          setDisciplinasDisponiveis(disciplinasMapped);
+          setTurmasDisponiveis(turmasMapped);
+        })
+        .catch(() => null)
+        .finally(() => {
+          void syncKeysFromBackend(keys).finally(() => {
+            setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []));
+            setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, []));
+            void loadVinculosDisciplinaTurma()
+              .then((rows) => setVinculos(rows as DisciplinaVinculo[]))
+              .catch(() => setVinculos([]));
+            setStorageTick((t) => t + 1);
+          });
+        });
+      return;
+    }
+    void syncKeysFromBackend(keysOffline).finally(() => {
+      setDisciplinasDisponiveis(loadFromStorage<CatalogItem[]>(disciplinasStorageKey, []));
+      setTurmasDisponiveis(loadFromStorage<Turma[]>(turmasStorageKey, []));
+      setVinculos(loadFromStorage<DisciplinaVinculo[]>(vinculosStorageKey, []));
+      setStorageTick((t) => t + 1);
+    });
   }, []);
 
   useEffect(() => {
@@ -230,6 +314,18 @@ const Notas: React.FC = () => {
     setStatusSelecionado(lf.statusSelecionado);
     navigate('.', { replace: true, state: {} });
   }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (isNotasRelacionalEnabled()) return;
+    setLancamentos(loadFromStorage<Lancamento[]>(storageKey, []));
+  }, []);
+
+  useEffect(() => {
+    if (!isNotasRelacionalEnabled()) return;
+    void listNotasRelacionalResumo()
+      .then((rows) => setLancamentos(rows.map(mapResumoApiToLancamento)))
+      .catch(() => null);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!isProvasRelacionalEnabled() || !user?.id) {
@@ -276,7 +372,9 @@ const Notas: React.FC = () => {
   }, [user?.id]);
 
   const respostasProvasMescladas = useMemo(() => {
-    const local = loadFromStorage<ProvaRespostaStorage[]>(provasRespostasStorageKey, []);
+    const local = isNotasRelacionalEnabled()
+      ? []
+      : loadFromStorage<ProvaRespostaStorage[]>(provasRespostasStorageKey, []);
     const byKey = new Map<string, ProvaRespostaStorage>();
     const keyOf = (r: { provaId: string; alunoId: string }) => `${r.provaId}-${r.alunoId}`;
     local.forEach((r) => byKey.set(keyOf(r), r));
@@ -285,10 +383,13 @@ const Notas: React.FC = () => {
   }, [storageTick, respostasProvasRel]);
 
   const lancamentosComMetricas = useMemo(() => {
+    if (isNotasRelacionalEnabled()) {
+      return lancamentosCompletos;
+    }
     const notasAlunos = loadFromStorage<NotaAlunoStorage[]>(notasAlunosStorageKey, []);
     const provasCatalogo = loadFromStorage<ProvaCatalogStorage[]>(provasStorageKey, []);
     const entregasAtividades = loadFromStorage<AtividadeEntregaStorage[]>(atividadesEntregasStorageKey, []);
-    const usuarios = loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers);
+    const usuarios = loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers);
 
     return recalcularPendenciasLancamentos(lancamentosCompletos, {
       vinculos,
@@ -321,6 +422,9 @@ const Notas: React.FC = () => {
     );
   }, [vinculos, disciplinaNomePorId, turmasDisponiveis, disciplinasDisponiveis]);
   const lancamentosVisiveis = useMemo(() => {
+    if (isNotasRelacionalEnabled()) {
+      return lancamentosComMetricas;
+    }
     if (ehProfessor) {
       return lancamentosComMetricas.filter((item) =>
         paresVinculadosProfessor.has(`${normalizeText(item.turma)}::${normalizeText(item.disciplina)}`),
@@ -450,6 +554,30 @@ const Notas: React.FC = () => {
       pendentes: Math.max(0, draft.pendentes),
     };
 
+    if (isNotasRelacionalEnabled()) {
+      if (editingId) {
+        window.alert('Com a API ativa, edite removendo o cabeçalho salvo e criando um novo lançamento, se necessário.');
+        setDialogOpen(false);
+        return;
+      }
+      const turmaOpt = turmasDisponiveis.find((t) => t.nome === normalized.turma);
+      const discOpt = disciplinasDisponiveis.find((d) => d.nome === normalized.disciplina);
+      void createNotaLancamentoCabecalhoRel({
+        turmaId: turmaOpt?.id != null ? Number(turmaOpt.id) : undefined,
+        turmaNome: normalized.turma,
+        disciplinaId: discOpt?.id != null ? Number(discOpt.id) : undefined,
+        disciplinaNome: normalized.disciplina,
+        bimestre: normalized.bimestre,
+      })
+        .then(() => listNotasRelacionalResumo())
+        .then((rows) => setLancamentos(rows.map(mapResumoApiToLancamento)))
+        .catch(() => {
+          window.alert('Não foi possível salvar o lançamento no servidor. Verifique turma, disciplina e bimestre.');
+        })
+        .finally(() => setDialogOpen(false));
+      return;
+    }
+
     if (editingId) {
       const updated = lancamentos.map((item) =>
         item.id === editingId ? { ...item, ...normalized } : item,
@@ -473,6 +601,20 @@ const Notas: React.FC = () => {
       `Deseja remover o lancamento de ${item.disciplina} (${item.turma})?`,
     );
     if (!confirmed) return;
+    if (isNotasRelacionalEnabled()) {
+      const m = /^cab-(\d+)$/.exec(item.id);
+      if (!m) {
+        window.alert(
+          'Este lançamento é gerado automaticamente (turma/disciplina/bimestre). Só é possível excluir cabeçalhos criados manualmente.',
+        );
+        return;
+      }
+      void deleteNotaLancamentoCabecalhoRel(Number(m[1]))
+        .then(() => listNotasRelacionalResumo())
+        .then((rows) => setLancamentos(rows.map(mapResumoApiToLancamento)))
+        .catch(() => window.alert('Não foi possível remover no servidor.'));
+      return;
+    }
     const updated = lancamentos.filter((row) => row.id !== item.id);
     setLancamentos(updated);
     saveToStorage(storageKey, updated);
@@ -671,7 +813,17 @@ const Notas: React.FC = () => {
                       </div>
                       {!somenteConsulta && (
                         <div className="flex items-center gap-2">
-                          <Button variant="outline" size="sm" onClick={() => handleOpenEdit(item)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={isNotasRelacionalEnabled()}
+                            title={
+                              isNotasRelacionalEnabled()
+                                ? 'Edição pelo servidor em breve; use excluir cabeçalho manual se aplicável.'
+                                : undefined
+                            }
+                            onClick={() => handleOpenEdit(item)}
+                          >
                             <Pencil className="w-4 h-4" />
                           </Button>
                           <Button variant="destructive" size="sm" onClick={() => handleDelete(item)}>

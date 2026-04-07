@@ -13,6 +13,20 @@ import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import { StoredUser, defaultUsers, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  getTurmaApi,
+  isApiEnabled,
+  listTurmasApi,
+  listUsuariosApi,
+  saveTurmaApi,
+} from '@/lib/entityCrudApi';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import {
+  rotuloTurnoParaExibicao,
+  turnoNomeParaTipo,
+  turnoTipoParaIdPadrao,
+} from '@/lib/turnosCatalog';
+import { loadVinculosDisciplinaTurma, type VinculoDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
@@ -25,16 +39,6 @@ interface UsuarioApi {
   email: string;
   role: string;
   ativo: boolean;
-}
-
-interface DisciplinaVinculoStorage {
-  turmaId: string;
-  professorId?: string;
-  professorNome: string;
-  alunos: Array<{
-    alunoId: string;
-    alunoNome: string;
-  }>;
 }
 
 function roleToPerfil(role: string): UserProfile {
@@ -60,16 +64,61 @@ const TurmaDetalhe: React.FC = () => {
   const turmaIdParam = id ? decodeURIComponent(id) : '';
   const [buscaAluno, setBuscaAluno] = useState('');
   const [turmaDestinoPorAluno, setTurmaDestinoPorAluno] = useState<Record<string, string>>({});
-  const [turmas, setTurmas] = useState<Turma[]>(() => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas));
-  const [usuarios, setUsuarios] = useState<StoredUser[]>(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
+  const [turmas, setTurmas] = useState<Turma[]>(() =>
+    loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
-  const [vinculos, setVinculos] = useState<DisciplinaVinculoStorage[]>(
-    () => loadFromStorage<DisciplinaVinculoStorage[]>(vinculosStorageKey, []),
+  const [usuarios, setUsuarios] = useState<StoredUser[]>(
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
+  );
+  const [vinculos, setVinculos] = useState<VinculoDisciplinaTurma[]>(
+    () => loadFromStorage<VinculoDisciplinaTurma[]>(vinculosStorageKey, []),
   );
 
   useEffect(() => {
-    if (!API_URL) return;
+    if (!isApiEnabled()) return;
+    void Promise.all([listTurmasApi(), listUsuariosApi(), loadVinculosDisciplinaTurma()])
+      .then(([turmasApi, usuariosApi, vincRows]) => {
+        const turmasMapped: Turma[] = turmasApi.map((t) => {
+          const nomeTurno = t.turnoNome?.trim() ?? '';
+          const tid =
+            t.turnoId != null && Number.isFinite(Number(t.turnoId))
+              ? String(t.turnoId)
+              : turnoTipoParaIdPadrao(turnoNomeParaTipo(nomeTurno));
+          return {
+            id: String(t.id ?? ''),
+            nome: t.nome ?? `Turma ${t.id ?? ''}`,
+            turnoId: tid,
+            turnoNome: nomeTurno || undefined,
+            turno: turnoNomeParaTipo(nomeTurno),
+            alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+            professor: t.professorId ? String(t.professorId) : '',
+            status: (t.status as Turma['status']) ?? 'Ativa',
+            proximaAula: '',
+          };
+        });
+        const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: roleToPerfil(u.role ?? 'ROLE_ALUNO'),
+          turno: undefined,
+          status: u.ativo ? 'ativo' : 'inativo',
+          turmas: [],
+        }));
+        const merged = mergeAlunosTurmasFromApi(usuariosMapped, turmasApi);
+        setTurmas(turmasMapped);
+        setUsuarios(merged);
+        setVinculos(vincRows);
+        saveToStorage(turmasStorageKey, turmasMapped);
+        saveToStorage(usersStorageKey, merged);
+        saveToStorage(vinculosStorageKey, vincRows);
+      })
+      .catch(() => null);
+  }, []);
+
+  useEffect(() => {
+    if (!API_URL || isApiEnabled()) return;
     let cancelled = false;
     const token = localStorage.getItem('token');
     fetch(`${API_URL}/api/usuarios?size=500`, {
@@ -228,7 +277,7 @@ const TurmaDetalhe: React.FC = () => {
   }, [usuarios, vinculos, turmas]);
 
   const handleVincularAluno = (aluno: StoredUser) => {
-    if (!turma) return;
+    if (!turma || !podeGerenciarAlunos) return;
     if (idsAlunosDaTurma.has(aluno.id)) return;
     const turmaConflitante = Array.from(turmasPorAlunoId.get(aluno.id) ?? []).find(
       (nomeTurma) => nomeTurma !== turma.nome,
@@ -247,13 +296,41 @@ const TurmaDetalhe: React.FC = () => {
       return { ...u, turmas: [...turmasAluno, turma.nome] };
     });
     setUsuarios(updatedUsuarios);
-    saveToStorage(usersStorageKey, updatedUsuarios);
+    if (!isApiEnabled()) {
+      saveToStorage(usersStorageKey, updatedUsuarios);
+    }
 
     const updatedTurmas = turmas.map((t) =>
       t.id === turma.id ? { ...t, alunos: t.alunos + 1 } : t,
     );
     setTurmas(updatedTurmas);
-    saveToStorage(turmasStorageKey, updatedTurmas);
+    if (!isApiEnabled()) {
+      saveToStorage(turmasStorageKey, updatedTurmas);
+    }
+
+    if (isApiEnabled()) {
+      const tid = Number(turma.id);
+      if (Number.isFinite(tid)) {
+        void getTurmaApi(tid)
+          .then((current) => {
+            const set = new Set((current.alunosIds ?? []).map((x) => Number(x)));
+            set.add(Number(aluno.id));
+            const profNum = Number(current.professorId ?? turma.professor);
+            const turnoNum = Number(
+              current.turnoId ?? turma.turnoId ?? turnoTipoParaIdPadrao(turma.turno),
+            );
+            return saveTurmaApi({
+              id: tid,
+              nome: current.nome ?? turma.nome,
+              turnoId: Number.isFinite(turnoNum) ? turnoNum : undefined,
+              status: current.status ?? turma.status,
+              professorId: Number.isFinite(profNum) ? profNum : current.professorId ?? null,
+              alunosIds: Array.from(set),
+            });
+          })
+          .catch(() => null);
+      }
+    }
 
     const vinculoTurma = vinculos.find((v) => v.turmaId === turma.id);
     if (vinculoTurma) {
@@ -268,7 +345,9 @@ const TurmaDetalhe: React.FC = () => {
             : v,
         );
         setVinculos(updatedVinculos);
-        saveToStorage(vinculosStorageKey, updatedVinculos);
+        if (!isApiEnabled()) {
+          saveToStorage(vinculosStorageKey, updatedVinculos);
+        }
       }
     }
   };
@@ -285,13 +364,41 @@ const TurmaDetalhe: React.FC = () => {
       return { ...u, turmas: (u.turmas ?? []).filter((t) => t !== turma.nome) };
     });
     setUsuarios(updatedUsuarios);
-    saveToStorage(usersStorageKey, updatedUsuarios);
+    if (!isApiEnabled()) {
+      saveToStorage(usersStorageKey, updatedUsuarios);
+    }
 
     const updatedTurmas = turmas.map((t) =>
       t.id === turma.id ? { ...t, alunos: Math.max(0, t.alunos - 1) } : t,
     );
     setTurmas(updatedTurmas);
-    saveToStorage(turmasStorageKey, updatedTurmas);
+    if (!isApiEnabled()) {
+      saveToStorage(turmasStorageKey, updatedTurmas);
+    }
+
+    if (isApiEnabled()) {
+      const tid = Number(turma.id);
+      if (Number.isFinite(tid)) {
+        void getTurmaApi(tid)
+          .then((current) => {
+            const set = new Set((current.alunosIds ?? []).map((x) => Number(x)));
+            set.delete(Number(alunoId));
+            const profNum = Number(current.professorId ?? turma.professor);
+            const turnoNum = Number(
+              current.turnoId ?? turma.turnoId ?? turnoTipoParaIdPadrao(turma.turno),
+            );
+            return saveTurmaApi({
+              id: tid,
+              nome: current.nome ?? turma.nome,
+              turnoId: Number.isFinite(turnoNum) ? turnoNum : undefined,
+              status: current.status ?? turma.status,
+              professorId: Number.isFinite(profNum) ? profNum : current.professorId ?? null,
+              alunosIds: Array.from(set),
+            });
+          })
+          .catch(() => null);
+      }
+    }
 
     const updatedVinculos = vinculos.map((v) =>
       v.turmaId === turma.id
@@ -299,7 +406,9 @@ const TurmaDetalhe: React.FC = () => {
         : v,
     );
     setVinculos(updatedVinculos);
-    saveToStorage(vinculosStorageKey, updatedVinculos);
+    if (!isApiEnabled()) {
+      saveToStorage(vinculosStorageKey, updatedVinculos);
+    }
   };
 
   const handleMigrarAluno = (alunoId: string) => {
@@ -322,7 +431,9 @@ const TurmaDetalhe: React.FC = () => {
       return semOrigem.includes(destino.nome) ? { ...u, turmas: semOrigem } : { ...u, turmas: [...semOrigem, destino.nome] };
     });
     setUsuarios(updatedUsuarios);
-    saveToStorage(usersStorageKey, updatedUsuarios);
+    if (!isApiEnabled()) {
+      saveToStorage(usersStorageKey, updatedUsuarios);
+    }
 
     const updatedTurmas = turmas.map((t) => {
       if (t.id === turma.id) return { ...t, alunos: Math.max(0, t.alunos - 1) };
@@ -330,7 +441,46 @@ const TurmaDetalhe: React.FC = () => {
       return t;
     });
     setTurmas(updatedTurmas);
-    saveToStorage(turmasStorageKey, updatedTurmas);
+    if (!isApiEnabled()) {
+      saveToStorage(turmasStorageKey, updatedTurmas);
+    }
+
+    if (isApiEnabled()) {
+      const tidOrig = Number(turma.id);
+      const tidDest = Number(destino.id);
+      if (Number.isFinite(tidOrig) && Number.isFinite(tidDest)) {
+        void Promise.all([getTurmaApi(tidOrig), getTurmaApi(tidDest)])
+          .then(([orig, dst]) => {
+            const setOrig = new Set((orig.alunosIds ?? []).map((x) => Number(x)));
+            setOrig.delete(Number(alunoId));
+            const setDst = new Set((dst.alunosIds ?? []).map((x) => Number(x)));
+            setDst.add(Number(alunoId));
+            const profO = Number(orig.professorId ?? turma.professor);
+            const profD = Number(dst.professorId ?? destino.professor);
+            const turnoO = Number(orig.turnoId ?? turma.turnoId ?? turnoTipoParaIdPadrao(turma.turno));
+            const turnoD = Number(dst.turnoId ?? destino.turnoId ?? turnoTipoParaIdPadrao(destino.turno));
+            return Promise.all([
+              saveTurmaApi({
+                id: tidOrig,
+                nome: orig.nome ?? turma.nome,
+                turnoId: Number.isFinite(turnoO) ? turnoO : undefined,
+                status: orig.status ?? turma.status,
+                professorId: Number.isFinite(profO) ? profO : orig.professorId ?? null,
+                alunosIds: Array.from(setOrig),
+              }),
+              saveTurmaApi({
+                id: tidDest,
+                nome: dst.nome ?? destino.nome,
+                turnoId: Number.isFinite(turnoD) ? turnoD : undefined,
+                status: dst.status ?? destino.status,
+                professorId: Number.isFinite(profD) ? profD : dst.professorId ?? null,
+                alunosIds: Array.from(setDst),
+              }),
+            ]);
+          })
+          .catch(() => null);
+      }
+    }
 
     const updatedVinculos = vinculos.map((v) => {
       if (v.turmaId === turma.id) {
@@ -344,7 +494,9 @@ const TurmaDetalhe: React.FC = () => {
       return v;
     });
     setVinculos(updatedVinculos);
-    saveToStorage(vinculosStorageKey, updatedVinculos);
+    if (!isApiEnabled()) {
+      saveToStorage(vinculosStorageKey, updatedVinculos);
+    }
 
     setTurmaDestinoPorAluno((prev) => ({ ...prev, [alunoId]: '' }));
   };
@@ -377,7 +529,7 @@ const TurmaDetalhe: React.FC = () => {
             <CardHeader>
               <CardTitle className="text-sm font-medium text-muted-foreground">Turno</CardTitle>
             </CardHeader>
-            <CardContent className="text-xl font-semibold">{turma.turno}</CardContent>
+            <CardContent className="text-xl font-semibold">{rotuloTurnoParaExibicao(turma)}</CardContent>
           </Card>
           <Card>
             <CardHeader>
@@ -451,7 +603,7 @@ const TurmaDetalhe: React.FC = () => {
                               <SelectContent>
                                 {turmasDestino.map((destino) => (
                                   <SelectItem key={destino.id} value={destino.id}>
-                                    {destino.nome} ({destino.turno})
+                                    {destino.nome} ({rotuloTurnoParaExibicao(destino)})
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -479,7 +631,7 @@ const TurmaDetalhe: React.FC = () => {
                 </TableBody>
               </Table>
             )}
-            {resultadosBuscaVinculacao.length > 0 && (
+            {podeGerenciarAlunos && resultadosBuscaVinculacao.length > 0 && (
               <div className="mt-4 border rounded-md p-3 space-y-2">
                 <p className="text-sm font-medium">Resultados para vincular</p>
                 {resultadosBuscaVinculacao.map((aluno) => {

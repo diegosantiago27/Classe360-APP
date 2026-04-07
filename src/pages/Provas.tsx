@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, FileText, MapPin, Pencil, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { Turma, defaultTurmas, turmasStorageKey } from '@/lib/mockTurmas';
 import {
   CatalogItem,
@@ -22,6 +22,17 @@ import {
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { UserProfile } from '@/types/auth';
 import { Link } from 'react-router-dom';
+import {
+  deleteProvaApi,
+  isApiEnabled,
+  listDisciplinasApi,
+  listPeriodosApi,
+  listProvasApi,
+  listTurmasApi,
+  listUsuariosApi,
+  saveProvaApi,
+} from '@/lib/entityCrudApi';
+import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
 type ProvaStatus = 'Agendada' | 'Rascunho' | 'Concluida';
 type QuestionType = 'multipla' | 'aberta';
@@ -50,9 +61,26 @@ interface Prova {
   questoes?: ProvaQuestion[];
 }
 
-const storageKey = 'school-compass:provas';
+interface ProvaMeta {
+  sala?: string;
+  questoes?: ProvaQuestion[];
+}
 
-const defaultProvas: Prova[] = [
+const parseProvaMeta = (value?: string): ProvaMeta => {
+  if (!value?.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as ProvaMeta;
+    if (parsed && typeof parsed === 'object') return parsed;
+    return {};
+  } catch {
+    return {};
+  }
+};
+
+const storageKey = 'school-compass:provas';
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+const defaultProvas: Prova[] = API_URL ? [] : [
   {
     id: 'PROVA-001',
     titulo: 'Prova de Matematica',
@@ -97,8 +125,9 @@ const defaultProvas: Prova[] = [
 const Provas: React.FC = () => {
   const { user } = useAuth();
   const [provas, setProvas] = useState<Prova[]>(
-    () => loadFromStorage<Prova[]>(storageKey, defaultProvas),
+    () => loadFromStorage<Prova[]>(storageKey, isApiEnabled() ? [] : defaultProvas),
   );
+  const [storageTick, setStorageTick] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Omit<Prova, 'id'>>({
@@ -123,29 +152,126 @@ const Provas: React.FC = () => {
       },
     ],
   });
+  const refreshFromApi = () => {
+    if (!isApiEnabled()) return Promise.resolve();
+    return Promise.all([
+      listProvasApi(),
+      listTurmasApi(),
+      listUsuariosApi(),
+      listDisciplinasApi(),
+      listPeriodosApi(),
+    ])
+      .then(([provasApi, turmasApi, usuariosApi, disciplinasApi, periodosApi]) => {
+        const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          id: String(t.id ?? ''),
+          nome: t.nome ?? `Turma ${t.id ?? ''}`,
+          ...mapTurnoFieldsFromTurmaApi(t),
+          status: 'Ativa',
+          alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
+          professor: '',
+          proximaAula: '',
+        }));
+        const usuariosMapped: StoredUser[] = usuariosApi.map((u) => ({
+          id: String(u.id ?? ''),
+          cpf: u.cpf ?? '',
+          nome: u.nome ?? '',
+          email: u.email ?? '',
+          perfil: String(u.role ?? '').includes('PROFESSOR')
+            ? UserProfile.PROFESSOR
+            : String(u.role ?? '').includes('ADMIN')
+              ? UserProfile.ADMINISTRADOR
+              : String(u.role ?? '').includes('GESTOR')
+                ? UserProfile.GESTOR
+                : String(u.role ?? '').includes('SECRETARIA')
+                  ? UserProfile.SECRETARIA
+                  : UserProfile.ALUNO,
+          status: u.ativo === false ? 'inativo' : 'ativo',
+          turmas: [],
+        }));
+        const disciplinasMapped: CatalogItem[] = disciplinasApi.map((d) => ({
+          id: String(d.id ?? ''),
+          nome: d.nome ?? `Disciplina ${d.id ?? ''}`,
+        }));
+        const periodosMapped: CatalogItem[] = periodosApi.map((p) => ({
+          id: String(p.id ?? ''),
+          nome: p.nome ?? `Periodo ${p.id ?? ''}`,
+        }));
+        const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
+        const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
+        const provasMapped: Prova[] = provasApi.map((p) => {
+          const meta = parseProvaMeta(p.descricao);
+          return {
+            id: String(p.id ?? createId('prova')),
+            titulo: p.titulo ?? '',
+            turma: turmaNomeById.get(String(p.turmaId ?? '')) ?? `Turma ${p.turmaId ?? ''}`,
+            disciplina:
+              disciplinaNomeById.get(String(p.disciplinaId ?? '')) ?? `Disciplina ${p.disciplinaId ?? ''}`,
+            periodo: p.periodo ?? '',
+            data: p.data ?? '',
+            horario: p.horario ?? '',
+            sala: meta.sala ?? '',
+            instrucoes: p.instrucoes ?? '',
+            status:
+              p.status === 'Agendada' || p.status === 'Rascunho' || p.status === 'Concluida'
+                ? p.status
+                : 'Agendada',
+            publicada: Boolean(p.publicada),
+            questoes: meta.questoes ?? [],
+          };
+        });
+        saveToStorage(turmasStorageKey, turmasMapped);
+        saveToStorage(usersStorageKey, usuariosMapped);
+        saveToStorage(disciplinasStorageKey, disciplinasMapped);
+        saveToStorage(periodosStorageKey, periodosMapped);
+        setProvas(provasMapped);
+        setStorageTick((prev) => prev + 1);
+      })
+      .catch(() => {
+        window.alert('Não foi possível carregar provas. Verifique a API e tente novamente.');
+        setProvas([]);
+        setStorageTick((prev) => prev + 1);
+      });
+  };
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      void refreshFromApi();
+      return;
+    }
+    void syncKeysFromBackend([
+      storageKey,
+      turmasStorageKey,
+      usersStorageKey,
+      disciplinasStorageKey,
+      periodosStorageKey,
+    ]).finally(() => {
+      setProvas(loadFromStorage<Prova[]>(storageKey, defaultProvas));
+      setStorageTick((prev) => prev + 1);
+    });
+  }, []);
   const totalAgendadas = useMemo(
     () => provas.filter((prova) => prova.status === 'Agendada').length,
     [provas],
   );
   const turmasDisponiveis = useMemo(
-    () => loadFromStorage<Turma[]>(turmasStorageKey, defaultTurmas),
-    [],
+    () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
+    [storageTick],
   );
   const usuariosCadastrados = useMemo(
-    () => loadFromStorage<StoredUser[]>(usersStorageKey, defaultUsers),
-    [],
+    () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
+    [storageTick],
   );
   const professorLogado = useMemo(() => {
     if (!user) return null;
     return usuariosCadastrados.find((item) => item.id === user.id) ?? null;
   }, [usuariosCadastrados, user]);
   const disciplinasDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, defaultDisciplinas),
-    [],
+    () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
+    [storageTick],
   );
   const periodosDisponiveis = useMemo(
-    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
-    [],
+    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, isApiEnabled() ? [] : defaultPeriodos),
+    [storageTick],
   );
   const turmaOptions = useMemo(() => {
     const baseOptions = turmasDisponiveis.map((turma) => turma.nome);
@@ -265,6 +391,35 @@ const Provas: React.FC = () => {
     });
     if (questaoInvalida) {
       window.alert('Preencha enunciado, pontuação e as opções/correta das questões.');
+      return;
+    }
+
+    if (isApiEnabled()) {
+      const turmaId = turmasDisponiveis.find((t) => t.nome === draft.turma)?.id;
+      const disciplinaId = disciplinasDisponiveis.find((d) => d.nome === draft.disciplina)?.id;
+      const turmaIdNum = Number(turmaId);
+      const disciplinaIdNum = Number(disciplinaId);
+      const editingIdNum = Number(editingId);
+      const professorIdNum = Number(user?.id);
+      const provaPayload = {
+        id: Number.isFinite(editingIdNum) ? editingIdNum : undefined,
+        titulo: draft.titulo,
+        descricao: JSON.stringify({ sala: draft.sala, questoes: draft.questoes ?? [] }),
+        turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
+        disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
+        professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
+        data: draft.data,
+        ativa: draft.status !== 'Concluida',
+        periodo: draft.periodo,
+        horario: draft.horario,
+        instrucoes: draft.instrucoes,
+        status: draft.status,
+        publicada: draft.publicada,
+      };
+      void saveProvaApi(provaPayload)
+        .then(() => refreshFromApi())
+        .catch(() => null);
+      setDialogOpen(false);
       return;
     }
 
@@ -401,6 +556,12 @@ const Provas: React.FC = () => {
       `Deseja remover a prova "${prova.titulo}" da turma ${prova.turma}?`,
     );
     if (!confirmed) return;
+    if (isApiEnabled() && Number.isFinite(Number(prova.id))) {
+      void deleteProvaApi(Number(prova.id))
+        .then(() => refreshFromApi())
+        .catch(() => null);
+      return;
+    }
     const updated = provas.filter((item) => item.id !== prova.id);
     setProvas(updated);
     saveToStorage(storageKey, updated);
@@ -411,7 +572,36 @@ const Provas: React.FC = () => {
       prova.id === provaId ? { ...prova, publicada: !prova.publicada } : prova,
     );
     setProvas(updated);
-    saveToStorage(storageKey, updated);
+    if (!isApiEnabled()) {
+      saveToStorage(storageKey, updated);
+    } else {
+      const alvo = updated.find((p) => p.id === provaId);
+      if (!alvo) return;
+      const turmaId = turmasDisponiveis.find((t) => t.nome === alvo.turma)?.id;
+      const disciplinaId = disciplinasDisponiveis.find((d) => d.nome === alvo.disciplina)?.id;
+      const turmaIdNum = Number(turmaId);
+      const disciplinaIdNum = Number(disciplinaId);
+      const provaIdNum = Number(alvo.id);
+      const professorIdNum = Number(user?.id);
+      const payload = {
+        id: Number.isFinite(provaIdNum) ? provaIdNum : undefined,
+        titulo: alvo.titulo,
+        descricao: JSON.stringify({ sala: alvo.sala, questoes: alvo.questoes ?? [] }),
+        turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
+        disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
+        professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
+        data: alvo.data,
+        ativa: alvo.status !== 'Concluida',
+        periodo: alvo.periodo,
+        horario: alvo.horario,
+        instrucoes: alvo.instrucoes,
+        status: alvo.status,
+        publicada: alvo.publicada,
+      };
+      void saveProvaApi(payload)
+        .then(() => refreshFromApi())
+        .catch(() => null);
+    }
   };
 
   return (

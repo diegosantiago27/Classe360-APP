@@ -9,6 +9,14 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listTurmasApi,
+  saveEntregaAtividadeApi,
+} from '@/lib/entityCrudApi';
 
 interface Atividade {
   id: string;
@@ -51,6 +59,47 @@ interface AtividadeEntrega {
 const atividadesStorageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
 
+type AtividadeMeta = {
+  descricao?: string;
+  periodo?: string;
+  sala?: string;
+  horario?: string;
+  instrucoes?: string;
+  questoes?: Atividade['questoes'];
+};
+
+const parseAtividadeMeta = (value?: string): AtividadeMeta => {
+  if (!value?.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as AtividadeMeta;
+    if (parsed && typeof parsed === 'object') return parsed;
+    return {};
+  } catch {
+    return { descricao: value };
+  }
+};
+
+const parseEntregaResposta = (value?: string) => {
+  if (!value?.trim()) return { resposta: '', linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  try {
+    const parsed = JSON.parse(value) as {
+      resposta?: string;
+      linkAnexo?: string;
+      respostasObjetivas?: AtividadeEntrega['respostasObjetivas'];
+    };
+    if (parsed && typeof parsed === 'object') {
+      return {
+        resposta: parsed.resposta ?? '',
+        linkAnexo: parsed.linkAnexo ?? '',
+        respostasObjetivas: parsed.respostasObjetivas ?? [],
+      };
+    }
+    return { resposta: value, linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  } catch {
+    return { resposta: value, linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  }
+};
+
 const AtividadeRealizar: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,22 +108,97 @@ const AtividadeRealizar: React.FC = () => {
   const [linkAnexo, setLinkAnexo] = useState('');
   const [respostasMultipla, setRespostasMultipla] = useState<Record<string, number>>({});
 
-  const atividade = useMemo(() => {
+  const atividadeLocal = useMemo(() => {
+    if (isApiEnabled()) return null;
     const atividades = loadFromStorage<Atividade[]>(atividadesStorageKey, []);
     return atividades.find((item) => item.id === id) ?? null;
   }, [id]);
 
-  const entregaExistente = useMemo(() => {
+  const entregaLocal = useMemo(() => {
     if (!user?.id || !id) return null;
+    if (isApiEnabled()) return null;
     const entregas = loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []);
     return entregas.find((item) => item.atividadeId === id && item.alunoId === user.id) ?? null;
   }, [id, user]);
+  const [atividade, setAtividade] = useState<Atividade | null>(atividadeLocal);
+  const [entregaExistente, setEntregaExistente] = useState<AtividadeEntrega | null>(entregaLocal);
+
+  useEffect(() => {
+    setAtividade(atividadeLocal);
+  }, [atividadeLocal]);
+
+  useEffect(() => {
+    setEntregaExistente(entregaLocal);
+  }, [entregaLocal]);
+
+  useEffect(() => {
+    if (!id || !isApiEnabled()) return;
+    void Promise.all([
+      listAtividadesApi(),
+      listDisciplinasApi(),
+      listTurmasApi(),
+      listEntregasAtividadesApi(),
+    ])
+      .then(([atividadesApi, disciplinasApi, turmasApi, entregasApi]) => {
+        const turmaNomeById = new Map(
+          turmasApi.map((t) => [String(t.id ?? ''), t.nome ?? `Turma ${t.id ?? ''}`]),
+        );
+        const disciplinaNomeById = new Map(
+          disciplinasApi.map((d) => [String(d.id ?? ''), d.nome ?? `Disciplina ${d.id ?? ''}`]),
+        );
+        const atividadeApi = atividadesApi.find((item) => String(item.id ?? '') === String(id));
+        if (atividadeApi) {
+          const meta = parseAtividadeMeta(atividadeApi.descricao ?? '');
+          setAtividade({
+            id: String(atividadeApi.id ?? id),
+            titulo: atividadeApi.titulo ?? '',
+            turma: turmaNomeById.get(String(atividadeApi.turmaId ?? '')) ?? '',
+            disciplina: disciplinaNomeById.get(String(atividadeApi.disciplinaId ?? '')) ?? '',
+            periodo: meta.periodo ?? '',
+            sala: meta.sala ?? '',
+            data: atividadeApi.dataEntrega ?? '',
+            horario: meta.horario ?? '',
+            instrucoes: meta.instrucoes ?? '',
+            descricao: meta.descricao ?? '',
+            entrega: atividadeApi.dataEntrega ?? '',
+            questoes: meta.questoes ?? [],
+            status: 'Pendente',
+          });
+        }
+        if (user?.id) {
+          const entregaApi = entregasApi.find(
+            (item) =>
+              String(item.atividadeId ?? '') === String(id) &&
+              String(item.alunoId ?? '') === String(user.id),
+          );
+          if (entregaApi) {
+            const respostaPayload = parseEntregaResposta(entregaApi.resposta ?? '');
+            setEntregaExistente({
+              id: String(entregaApi.id ?? `${id}-${user.id}`),
+              atividadeId: String(entregaApi.atividadeId ?? id),
+              alunoId: String(entregaApi.alunoId ?? user.id),
+              alunoNome: user.nome,
+              disciplina:
+                disciplinaNomeById.get(String(atividadeApi?.disciplinaId ?? '')) ?? atividade?.disciplina ?? '',
+              resposta: respostaPayload.resposta,
+              linkAnexo: respostaPayload.linkAnexo,
+              respostasObjetivas: respostaPayload.respostasObjetivas,
+              enviadoEm: '',
+              nota: entregaApi.nota ?? null,
+            });
+          }
+        }
+      })
+      .catch(() => {
+        window.alert('Nao foi possivel carregar a atividade. Verifique a API e tente novamente.');
+      });
+  }, [id, user?.id]);
 
   const modoConsulta = Boolean(entregaExistente);
   const dataEntrega = atividade?.data ?? atividade?.entrega ?? '';
   const horarioEntrega = atividade?.horario ?? '';
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!atividade || !user) return;
     const respostasObjetivas = Object.entries(respostasMultipla).map(([questaoId, alternativaIndex]) => ({
@@ -99,6 +223,29 @@ const AtividadeRealizar: React.FC = () => {
       enviadoEm: new Date().toISOString(),
     };
 
+    if (isApiEnabled()) {
+      const atividadeIdNum = Number(atividade.id);
+      const alunoIdNum = Number(user.id);
+      if (Number.isFinite(atividadeIdNum) && Number.isFinite(alunoIdNum)) {
+        try {
+          await saveEntregaAtividadeApi({
+            id: undefined,
+            atividadeId: atividadeIdNum,
+            alunoId: alunoIdNum,
+            resposta: resposta.trim(),
+            nota: null,
+            corrigido: false,
+          });
+          navigate('/atividades');
+          return;
+        } catch {
+          window.alert('Nao foi possivel enviar a atividade no servidor.');
+          return;
+        }
+      }
+      window.alert('Nao foi possivel enviar a atividade. IDs invalidos.');
+      return;
+    }
     const stored = loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []);
     const updated = [
       entrega,

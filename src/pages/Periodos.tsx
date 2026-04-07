@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, Pencil, Plus, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,18 +8,40 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { createId, loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { CatalogItem, defaultPeriodos, periodosStorageKey } from '@/lib/mockAcademics';
+import { deletePeriodoApi, isApiEnabled, listPeriodosApi, savePeriodoApi } from '@/lib/entityCrudApi';
 
 const Periodos: React.FC = () => {
   const { user } = useAuth();
   const somenteConsulta = user?.perfil === UserProfile.SECRETARIA;
   const [periodos, setPeriodos] = useState<CatalogItem[]>(
-    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos),
+    () => loadFromStorage<CatalogItem[]>(periodosStorageKey, isApiEnabled() ? [] : defaultPeriodos),
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [nome, setNome] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isApiEnabled()) {
+      setLoading(true);
+      void listPeriodosApi()
+        .then((items) => {
+          const mapped = items.map((item) => ({ id: String(item.id ?? createId('periodo')), nome: item.nome }));
+          setPeriodos(mapped);
+          saveToStorage(periodosStorageKey, mapped);
+        })
+        .catch(() => {
+          window.alert('Não foi possível carregar os períodos. Verifique a API e tente novamente.');
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+    void syncKeysFromBackend([periodosStorageKey]).finally(() => {
+      setPeriodos(loadFromStorage<CatalogItem[]>(periodosStorageKey, defaultPeriodos));
+    });
+  }, []);
 
   const total = useMemo(() => periodos.length, [periodos]);
 
@@ -40,6 +62,33 @@ const Periodos: React.FC = () => {
     const trimmed = nome.trim();
     if (!trimmed) return;
 
+    if (isApiEnabled()) {
+      setLoading(true);
+      const payload = {
+        id: editingId ? Number(editingId) : undefined,
+        nome: trimmed,
+      };
+      void savePeriodoApi(payload)
+        .then((saved) => {
+          const savedRow: CatalogItem = {
+            id: String(saved.id ?? editingId ?? createId('periodo')),
+            nome: saved.nome,
+          };
+          const updated = editingId
+            ? periodos.map((item) => (item.id === editingId ? savedRow : item))
+            : [savedRow, ...periodos];
+          setPeriodos(updated);
+          saveToStorage(periodosStorageKey, updated);
+          setDialogOpen(false);
+        })
+        .catch(() => {
+          window.alert('Não foi possível salvar o período. Verifique a API e tente novamente.');
+          setDialogOpen(false);
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     if (editingId) {
       const updated = periodos.map((item) =>
         item.id === editingId ? { ...item, nome: trimmed } : item,
@@ -58,9 +107,17 @@ const Periodos: React.FC = () => {
   const handleDelete = (item: CatalogItem) => {
     const confirmed = window.confirm(`Deseja remover o periodo "${item.nome}"?`);
     if (!confirmed) return;
-    const updated = periodos.filter((row) => row.id !== item.id);
-    setPeriodos(updated);
-    saveToStorage(periodosStorageKey, updated);
+    if (isApiEnabled() && Number.isFinite(Number(item.id))) {
+      setLoading(true);
+      void deletePeriodoApi(Number(item.id))
+        .catch(() => window.alert('Não foi possível remover o período. Verifique a API e tente novamente.'))
+        .finally(() => setLoading(false));
+    }
+    if (!isApiEnabled()) {
+      const updated = periodos.filter((row) => row.id !== item.id);
+      setPeriodos(updated);
+      saveToStorage(periodosStorageKey, updated);
+    }
   };
 
   return (
@@ -91,7 +148,7 @@ const Periodos: React.FC = () => {
                   Total de periodos
                 </CardTitle>
                 <div className="text-2xl font-semibold text-foreground">
-                  {total}
+                  {loading ? '...' : total}
                 </div>
               </div>
               <Calendar className="w-5 h-5 text-primary" />

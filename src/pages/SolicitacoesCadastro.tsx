@@ -142,6 +142,7 @@ const SolicitacoesCadastro: React.FC = () => {
 
   // Atualiza quando outra aba faz um novo cadastro (storage event ou BroadcastChannel)
   useEffect(() => {
+    if (API_URL) return;
     const onStorage = (e: StorageEvent) => {
       if (e.key === solicitacoesStorageKey) {
         setLoading(true);
@@ -157,7 +158,7 @@ const SolicitacoesCadastro: React.FC = () => {
       window.removeEventListener('storage', onStorage);
       unsubscribe();
     };
-  }, []);
+  }, [API_URL]);
 
   // Atualiza quando o usuário volta para a aba
   useEffect(() => {
