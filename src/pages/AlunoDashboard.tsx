@@ -25,15 +25,21 @@ import {
   Download,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useToast } from '@/hooks/use-toast';
 import {
+  getInstituicaoApi,
+  getTurmaApi,
+  getUsuarioApi,
   isApiEnabled,
   listAvisosApi,
   listDisciplinasApi,
   listFrequenciasApi,
   listGradeAulasApi,
+  listPeriodosApi,
   listTurmasApi,
   listUsuariosApi,
 } from '@/lib/entityCrudApi';
+import { gerarBoletimEscolarPdf, montarPayloadBoletimEscolar } from '@/lib/boletimEscolarPdf';
 import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 import {
@@ -173,6 +179,7 @@ interface ProvaResposta {
 
 const AlunoDashboard: React.FC = () => {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [provasList, setProvasList] = useState<Prova[]>(() =>
     isApiEnabled() ? [] : loadFromStorage<Prova[]>(provasStorageKey, []),
   );
@@ -524,6 +531,14 @@ const AlunoDashboard: React.FC = () => {
     if (!user?.id) return [];
     const turmaKeysAluno = new Set((alunoAtual?.turmas ?? []).map((t) => getTurmaKey(t)));
     if (turmaKeyAluno) turmaKeysAluno.add(turmaKeyAluno);
+    /** Quando o cadastro do aluno não tem turma no usuário, a API ainda envia turma nas notas/provas. */
+    notasDoAluno.forEach((n) => {
+      if (n.turma?.trim()) turmaKeysAluno.add(getTurmaKey(n.turma));
+    });
+    respostasRegistradas.forEach((r) => {
+      if (r.turma?.trim()) turmaKeysAluno.add(getTurmaKey(r.turma));
+    });
+    turmaKeysAluno.delete('');
 
     const vinculosAluno = vinculos.filter((v) => {
       const isAlunoNoVinculo = (v.alunos ?? []).some((a) => normalizeText(a.alunoId) === normalizeText(user.id));
@@ -588,6 +603,7 @@ const AlunoDashboard: React.FC = () => {
     disciplinasList,
     notasDoAluno,
     presencas,
+    respostasRegistradas,
     turmasList,
     turmaKeyAluno,
     user?.id,
@@ -784,6 +800,113 @@ const AlunoDashboard: React.FC = () => {
     setModoConsulta(true);
   };
 
+  const handleBoletim = async () => {
+    if (!isApiEnabled() || !user?.id) {
+      toast({
+        title: 'Indisponível',
+        description: 'É necessário estar conectado à API para gerar o boletim.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!isNotasRelacionalEnabled()) {
+      toast({
+        title: 'Boletim indisponível',
+        description: 'Configure VITE_API_URL e faça login para gerar o boletim com suas notas.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const uid = Number(user.id);
+    if (!Number.isFinite(uid)) return;
+    try {
+      const [inst, periodos, notasRows, freqs, disciplinas, turmasApi] = await Promise.all([
+        getInstituicaoApi().catch(() => ({})),
+        listPeriodosApi(),
+        listNotasRelacionalPorAluno(user.id),
+        listFrequenciasApi(),
+        listDisciplinasApi(),
+        listTurmasApi(),
+      ]);
+      const turmasMap = new Map(
+        turmasApi.map((t) => [Number(t.id), t.nome?.trim() || `Turma ${t.id}`]),
+      );
+      const disciplinasMap = new Map(
+        disciplinas.map((d) => [Number(d.id), d.nome?.trim() || `Disciplina ${d.id}`]),
+      );
+
+      const count = new Map<number, number>();
+      notasRows.forEach((n) => {
+        const tid = n.turmaId;
+        if (tid != null && Number.isFinite(tid)) count.set(tid, (count.get(tid) ?? 0) + 1);
+      });
+      const turmaId = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (turmaId == null) {
+        toast({
+          title: 'Sem dados no boletim',
+          description: 'Não há notas vinculadas a uma turma. Verifique o lançamento de notas.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      let turnoLabel = '—';
+      try {
+        const turma = await getTurmaApi(turmaId);
+        turnoLabel = turma.turnoNome?.trim() || '—';
+      } catch {
+        /* mantém — */
+      }
+
+      let dataNasc = user.dataNascimento;
+      let cpf = user.cpf;
+      try {
+        const u = await getUsuarioApi(uid);
+        dataNasc = u.dataNascimento ?? dataNasc;
+        cpf = u.cpf ?? cpf;
+      } catch {
+        /* usa dados do contexto */
+      }
+
+      const payload = montarPayloadBoletimEscolar({
+        alunoId: uid,
+        alunoNome: user.nome ?? 'Aluno',
+        alunoCpf: cpf,
+        dataNascimento: dataNasc,
+        responsavelNome: undefined,
+        notas: notasRows,
+        frequencias: freqs,
+        periodos,
+        disciplinasMap,
+        turmasMap,
+        turmaId,
+        turnoLabel,
+        instituicao: inst ?? {},
+        anoLetivo: new Date().getFullYear(),
+      });
+
+      if (!payload) {
+        toast({
+          title: 'Sem dados para o boletim',
+          description: 'Não há notas para sua turma ou períodos cadastrados.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      gerarBoletimEscolarPdf(payload);
+      toast({
+        title: 'Boletim gerado',
+        description: 'O download do PDF foi iniciado.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao gerar boletim',
+        description: error instanceof Error ? error.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
@@ -799,7 +922,7 @@ const AlunoDashboard: React.FC = () => {
             </p>
           </div>
           <div className="flex gap-3">
-            <Button variant="outline">
+            <Button type="button" variant="outline" onClick={() => void handleBoletim()}>
               <Download className="w-4 h-4 mr-2" />
               Boletim
             </Button>

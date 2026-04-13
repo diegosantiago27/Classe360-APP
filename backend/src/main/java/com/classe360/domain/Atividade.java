@@ -19,6 +19,7 @@ public class Atividade {
     @Column(nullable = false)
     private String titulo;
 
+    @Column(columnDefinition = "TEXT")
     private String descricao;
 
     @ManyToOne(optional = false)

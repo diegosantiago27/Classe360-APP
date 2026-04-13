@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000029-1" author="classe360">
+        <comment>Permite JSON completo da atividade (questões, instruções) em descricao.</comment>
+        <modifyDataType tableName="atividade" columnName="descricao" newDataType="TEXT"/>
+    </changeSet>
+</databaseChangeLog>

@@ -8,6 +8,16 @@ import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartToo
 import { useToast } from '@/hooks/use-toast';
 import { BarChart3, FileDown, TrendingUp, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getInstituicaoApi, type UsuarioApi, type DisciplinaTurmaApi } from '@/lib/entityCrudApi';
+import { gerarRelatorioDesempenhoPdf } from '@/lib/relatorioDesempenhoPdf';
+import {
+  gerarRelatorioDesempenhoIndividualPdf,
+  montarPayloadRelatorioIndividual,
+} from '@/lib/relatorioDesempenhoIndividualPdf';
+import {
+  gerarRelatorioConsolidadoTurmaPdf,
+  montarPayloadConsolidadoTurma,
+} from '@/lib/relatorioConsolidadoTurmaPdf';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -21,10 +31,16 @@ interface PeriodoApi {
   nome?: string;
 }
 
+interface DisciplinaApi {
+  id: number;
+  nome?: string;
+}
+
 interface NotaApi {
   id: number;
   alunoId?: number | null;
   turmaId?: number | null;
+  disciplinaId?: number | null;
   periodoId?: number | null;
   valor?: number | null;
 }
@@ -33,6 +49,8 @@ interface FrequenciaApi {
   id: number;
   alunoId?: number | null;
   turmaId?: number | null;
+  disciplinaId?: number | null;
+  data?: string | null;
   presente?: boolean | null;
 }
 
@@ -89,10 +107,14 @@ const Relatorios: React.FC = () => {
   const [erro, setErro] = useState<string | null>(null);
   const [turmas, setTurmas] = useState<TurmaApi[]>([]);
   const [periodos, setPeriodos] = useState<PeriodoApi[]>([]);
+  const [disciplinas, setDisciplinas] = useState<DisciplinaApi[]>([]);
   const [notas, setNotas] = useState<NotaApi[]>([]);
   const [frequencias, setFrequencias] = useState<FrequenciaApi[]>([]);
+  const [usuarios, setUsuarios] = useState<UsuarioApi[]>([]);
+  const [vinculos, setVinculos] = useState<DisciplinaTurmaApi[]>([]);
   const [turma, setTurma] = useState<string>('todas');
   const [bimestre, setBimestre] = useState<string>('todos');
+  const [alunoSelecionado, setAlunoSelecionado] = useState<string>('nenhum');
 
   const carregarDados = useCallback(async () => {
     if (!API_URL) {
@@ -102,16 +124,30 @@ const Relatorios: React.FC = () => {
     setLoading(true);
     setErro(null);
     try {
-      const [turmasData, periodosData, notasData, frequenciasData] = await Promise.all([
+      const [
+        turmasData,
+        periodosData,
+        disciplinasData,
+        notasData,
+        frequenciasData,
+        usuariosData,
+        vinculosData,
+      ] = await Promise.all([
         fetchAllPages<TurmaApi>('/api/turmas'),
         fetchAllPages<PeriodoApi>('/api/periodos'),
+        fetchAllPages<DisciplinaApi>('/api/disciplinas'),
         fetchAllPages<NotaApi>('/api/notas'),
         fetchAllPages<FrequenciaApi>('/api/frequencias'),
+        fetchAllPages<UsuarioApi>('/api/usuarios'),
+        fetchAllPages<DisciplinaTurmaApi>('/api/disciplina-turmas'),
       ]);
       setTurmas(turmasData);
       setPeriodos(periodosData);
+      setDisciplinas(disciplinasData);
       setNotas(notasData);
       setFrequencias(frequenciasData);
+      setUsuarios(usuariosData);
+      setVinculos(vinculosData);
     } catch (error) {
       setErro(error instanceof Error ? error.message : 'Falha ao carregar relatórios');
     } finally {
@@ -122,8 +158,6 @@ const Relatorios: React.FC = () => {
   useEffect(() => {
     void carregarDados();
   }, [carregarDados]);
-
-  const podeGerar = useMemo(() => Boolean(turma && bimestre) && !loading, [turma, bimestre, loading]);
 
   const cardsRelatorio = useMemo(
     () => [
@@ -159,6 +193,29 @@ const Relatorios: React.FC = () => {
     });
     return map;
   }, [periodos]);
+
+  const disciplinasMap = useMemo(() => {
+    const map = new Map<number, string>();
+    disciplinas.forEach((d) => {
+      map.set(d.id, d.nome?.trim() || `Disciplina ${d.id}`);
+    });
+    return map;
+  }, [disciplinas]);
+
+  const turmasMap = useMemo(() => {
+    const map = new Map<number, string>();
+    turmas.forEach((t) => {
+      map.set(t.id, t.nome?.trim() || `Turma ${t.id}`);
+    });
+    return map;
+  }, [turmas]);
+
+  const alunosFiltrados = useMemo(() => {
+    return usuarios
+      .filter((u) => String(u.role ?? '').toUpperCase().includes('ALUNO'))
+      .filter((u) => u.ativo !== false)
+      .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR'));
+  }, [usuarios]);
 
   const notasFiltradas = useMemo(() => {
     return notas.filter((n) => {
@@ -218,6 +275,118 @@ const Relatorios: React.FC = () => {
     });
   }, [turmasNoComparativo, notasFiltradas, frequenciasFiltradas]);
 
+  const dadosPdfDesempenho = useMemo(() => {
+    const turmasAlvo = turma === 'todas' ? turmas : turmas.filter((t) => String(t.id) === turma);
+    const nomeDisc = (id: number) => disciplinasMap.get(id) ?? `Disciplina ${id}`;
+
+    const resumoTurmas = turmasAlvo.map((t) => {
+      const notasT = notasFiltradas.filter((n) => n.turmaId === t.id);
+      const alunosIds = new Set(notasT.map((n) => n.alunoId).filter((x): x is number => x != null));
+      const media =
+        notasT.length > 0
+          ? toPercent(notasT.reduce((s, n) => s + (Number(n.valor) || 0), 0) / notasT.length)
+          : 0;
+      const freqTurma = frequenciasFiltradas.filter((f) => f.turmaId === t.id);
+      const frequenciaPct =
+        freqTurma.length > 0
+          ? toPercent((freqTurma.filter((f) => f.presente === true).length / freqTurma.length) * 100)
+          : 0;
+
+      const mediasPorAluno = new Map<number, number[]>();
+      notasT.forEach((n) => {
+        if (n.alunoId == null) return;
+        if (!mediasPorAluno.has(n.alunoId)) mediasPorAluno.set(n.alunoId, []);
+        mediasPorAluno.get(n.alunoId)!.push(Number(n.valor) || 0);
+      });
+      let aprov = 0;
+      let rec = 0;
+      let rep = 0;
+      mediasPorAluno.forEach((vals) => {
+        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+        if (m >= 7) aprov++;
+        else if (m >= 5) rec++;
+        else rep++;
+      });
+
+      return {
+        turma: t.nome?.trim() || `Turma ${t.id}`,
+        alunos: alunosIds.size,
+        media,
+        freqPct: frequenciaPct,
+        aprovados: aprov,
+        recuperacao: rec,
+        reprovados: rep,
+      };
+    });
+
+    const comparativo = comparativoTurma.map((c) => ({
+      turma: c.turma,
+      media: c.media,
+      frequencia: c.frequencia,
+    }));
+
+    const discIds = [
+      ...new Set(
+        notasFiltradas
+          .map((n) => n.disciplinaId)
+          .filter((x): x is number => x != null && Number.isFinite(Number(x))),
+      ),
+    ];
+
+    const rankingDisciplinas: Array<{
+      disciplina: string;
+      primeiroLugar: string;
+      media1: number;
+      segundoLugar: string;
+      media2: number;
+    }> = [];
+    const comparativoDisciplinas: Array<{
+      disciplina: string;
+      col1Turma: string;
+      col1Media: number;
+      col2Turma: string;
+      col2Media: number;
+    }> = [];
+
+    for (const dId of discIds) {
+      const notasD = notasFiltradas.filter((n) => n.disciplinaId === dId);
+      const turmaIds = [
+        ...new Set(
+          notasD.map((n) => n.turmaId).filter((x): x is number => x != null && Number.isFinite(Number(x))),
+        ),
+      ];
+      const avgs: Array<{ media: number; nome: string }> = [];
+      turmaIds.forEach((tid) => {
+        const nx = notasD.filter((n) => n.turmaId === tid);
+        const media =
+          nx.length > 0
+            ? toPercent(nx.reduce((s, n) => s + (Number(n.valor) || 0), 0) / nx.length)
+            : 0;
+        const nome = turmas.find((tt) => tt.id === tid)?.nome?.trim() ?? `Turma ${tid}`;
+        avgs.push({ media, nome });
+      });
+      avgs.sort((a, b) => b.media - a.media);
+      const first = avgs[0];
+      const second = avgs[1];
+      rankingDisciplinas.push({
+        disciplina: nomeDisc(dId),
+        primeiroLugar: first?.nome ?? '—',
+        media1: first?.media ?? 0,
+        segundoLugar: second?.nome ?? '—',
+        media2: second?.media ?? 0,
+      });
+      comparativoDisciplinas.push({
+        disciplina: nomeDisc(dId),
+        col1Turma: first?.nome ?? '—',
+        col1Media: first?.media ?? 0,
+        col2Turma: second?.nome ?? '—',
+        col2Media: second?.media ?? 0,
+      });
+    }
+
+    return { resumoTurmas, comparativo, rankingDisciplinas, comparativoDisciplinas };
+  }, [turma, turmas, notasFiltradas, frequenciasFiltradas, comparativoTurma, disciplinasMap]);
+
   const resumo = useMemo(() => {
     const melhorTurma =
       comparativoTurma.length > 0
@@ -248,61 +417,189 @@ const Relatorios: React.FC = () => {
     };
   }, [comparativoTurma, notasFiltradas]);
 
-  const handleExportar = (tipo: 'PDF' | 'Excel') => {
-    if (tipo === 'Excel') {
-      const linhas = [
-        'Turma;Media;Frequencia',
-        ...comparativoTurma.map((item) => `${item.turma};${item.media};${item.frequencia}`),
-      ];
-      const blob = new Blob([linhas.join('\n')], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'relatorio-comparativo.csv';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      toast({ title: 'Exportação concluída', description: 'Arquivo CSV gerado com dados do banco.' });
+  const handleGerarPdfComparativoTurmas = async () => {
+    if (!API_URL) {
+      toast({
+        title: 'API não configurada',
+        description: 'Defina VITE_API_URL para gerar o PDF.',
+        variant: 'destructive',
+      });
       return;
     }
-
-    window.print();
-    toast({
-      title: 'Exportação PDF',
-      description: 'Janela de impressão aberta para salvar em PDF.',
-    });
+    try {
+      let escola = 'Escola';
+      try {
+        const inst = await getInstituicaoApi();
+        escola = inst?.nome?.trim() || escola;
+      } catch {
+        /* mantém padrão */
+      }
+      const periodoLabel =
+        bimestre === 'todos'
+          ? 'Todos os períodos'
+          : periodosMap.get(Number(bimestre)) ?? `Período ${bimestre}`;
+      gerarRelatorioDesempenhoPdf({
+        escolaNome: escola,
+        periodoLabel,
+        comparativo: dadosPdfDesempenho.comparativo,
+        resumoTurmas: dadosPdfDesempenho.resumoTurmas,
+        rankingDisciplinas: dadosPdfDesempenho.rankingDisciplinas,
+        comparativoDisciplinas: dadosPdfDesempenho.comparativoDisciplinas,
+      });
+      toast({
+        title: 'PDF gerado',
+        description: 'Relatório comparativo entre turmas — download iniciado.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao gerar PDF',
+        description: error instanceof Error ? error.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
+    }
   };
 
-  const handleGerar = (origem?: string) => {
-    void carregarDados().then(() =>
+  const handleGerarPdfDesempenhoIndividual = async () => {
+    if (!API_URL) {
       toast({
-        title: 'Relatório atualizado',
-        description: origem
-          ? `Dados recarregados do banco para: ${origem}.`
-          : 'Dados recarregados do banco com sucesso.',
-      }),
-    );
+        title: 'API não configurada',
+        description: 'Defina VITE_API_URL para gerar o PDF.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (alunoSelecionado === 'nenhum') {
+      toast({
+        title: 'Selecione um aluno',
+        description: 'Escolha o aluno no campo acima para gerar o relatório individual.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const aid = Number(alunoSelecionado);
+    if (!Number.isFinite(aid)) {
+      toast({ title: 'Aluno inválido', variant: 'destructive' });
+      return;
+    }
+    try {
+      let escola = 'Escola';
+      try {
+        const inst = await getInstituicaoApi();
+        escola = inst?.nome?.trim() || escola;
+      } catch {
+        /* mantém padrão */
+      }
+      const usuarioAluno = usuarios.find((u) => Number(u.id) === aid);
+      const nome = usuarioAluno?.nome?.trim() ?? `Aluno ${aid}`;
+      const payload = montarPayloadRelatorioIndividual({
+        alunoId: aid,
+        alunoNome: nome,
+        alunoCpf: usuarioAluno?.cpf,
+        notas,
+        frequencias,
+        periodos,
+        disciplinasMap,
+        turmasMap,
+        vinculos,
+        turmaFiltro: turma,
+        bimestreFiltro: bimestre,
+        periodosMap,
+        escolaNome: escola,
+      });
+      if (!payload) {
+        toast({
+          title: 'Sem dados para o PDF',
+          description:
+            'Não há notas deste aluno com os filtros de turma/período atuais. Ajuste os filtros ou o aluno.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      gerarRelatorioDesempenhoIndividualPdf(payload);
+      toast({
+        title: 'PDF gerado',
+        description: 'Relatório de desempenho individual — download iniciado.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao gerar PDF',
+        description: error instanceof Error ? error.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleGerarPdfConsolidadoTurma = async () => {
+    if (!API_URL) {
+      toast({
+        title: 'API não configurada',
+        description: 'Defina VITE_API_URL para gerar o PDF.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (turma === 'todas') {
+      toast({
+        title: 'Selecione uma turma',
+        description: 'Escolha uma turma no filtro para gerar o consolidado.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const tid = Number(turma);
+    if (!Number.isFinite(tid)) {
+      toast({ title: 'Turma inválida', variant: 'destructive' });
+      return;
+    }
+    try {
+      let escola = 'Escola';
+      try {
+        const inst = await getInstituicaoApi();
+        escola = inst?.nome?.trim() || escola;
+      } catch {
+        /* mantém padrão */
+      }
+      const turmaNome = turmasMap.get(tid) ?? `Turma ${tid}`;
+      const payload = montarPayloadConsolidadoTurma({
+        turmaId: tid,
+        turmaNome,
+        notas,
+        frequencias,
+        usuarios,
+        disciplinasMap,
+        vinculos,
+        bimestreFiltro: bimestre,
+        periodosMap,
+        escolaNome: escola,
+      });
+      if (!payload) {
+        toast({
+          title: 'Sem dados para o PDF',
+          description: 'Não há notas para esta turma com o período selecionado.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      gerarRelatorioConsolidadoTurmaPdf(payload);
+      toast({
+        title: 'PDF gerado',
+        description: 'Relatório consolidado por turma — download iniciado.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao gerar PDF',
+        description: error instanceof Error ? error.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">Relatórios</h1>
-            <p className="text-muted-foreground">Análises de desempenho e frequência</p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button variant="outline" className="gap-2" onClick={() => handleExportar('Excel')}>
-              <FileDown className="h-4 w-4" />
-              Exportar Excel
-            </Button>
-            <Button variant="gradient" className="gap-2" onClick={() => handleExportar('PDF')}>
-              <FileDown className="h-4 w-4" />
-              Exportar PDF
-            </Button>
-          </div>
+        <div>
+          <h1 className="font-display text-3xl font-bold text-foreground">Relatórios</h1>
+          <p className="text-muted-foreground">Análises de desempenho e frequência</p>
         </div>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -334,10 +631,19 @@ const Relatorios: React.FC = () => {
             </SelectContent>
           </Select>
 
-          <div className="flex-1" />
-          <Button variant="outline" disabled={!podeGerar} onClick={() => handleGerar('filtros')}>
-            {loading ? 'Carregando...' : 'Gerar Relatório'}
-          </Button>
+          <Select value={alunoSelecionado} onValueChange={setAlunoSelecionado}>
+            <SelectTrigger className="w-full md:w-[260px]">
+              <SelectValue placeholder="Aluno (relatório individual)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="nenhum">Nenhum (só para PDF por aluno)</SelectItem>
+              {alunosFiltrados.map((u) => (
+                <SelectItem key={String(u.id)} value={String(u.id ?? '')}>
+                  {u.nome?.trim() ?? `Aluno ${u.id}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {erro && (
@@ -369,7 +675,15 @@ const Relatorios: React.FC = () => {
                   <Button
                     variant="outline"
                     className="w-full"
-                    onClick={() => handleGerar(item.title)}
+                    onClick={() => {
+                      if (item.key === 'comparativo') {
+                        void handleGerarPdfComparativoTurmas();
+                      } else if (item.key === 'consolidado') {
+                        void handleGerarPdfConsolidadoTurma();
+                      } else if (item.key === 'por-aluno') {
+                        void handleGerarPdfDesempenhoIndividual();
+                      }
+                    }}
                   >
                     <FileDown className="h-4 w-4" />
                     Gerar Relatório

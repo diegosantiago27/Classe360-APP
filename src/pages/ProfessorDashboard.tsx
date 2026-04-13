@@ -164,16 +164,6 @@ const ProfessorDashboard: React.FC = () => {
   const [respostaSelecionada, setRespostaSelecionada] = useState<ProvaResposta | null>(null);
   const [correcaoDraft, setCorrecaoDraft] = useState<Record<string, number>>({});
   const [turmaFiltro, setTurmaFiltro] = useState<string>('todas');
-  const questoesCriadas = useMemo(() => {
-    return provas
-      .flatMap((prova) =>
-        (prova.questoes ?? []).map((questao) => ({
-          provaTitulo: prova.titulo,
-          ...questao,
-        })),
-      )
-      .slice(0, 5);
-  }, [provas]);
   const turmasDisponiveis = useMemo(
     () => Array.from(new Set(respostas.map((item) => item.turma))).sort(),
     [respostas],
@@ -504,59 +494,6 @@ const ProfessorDashboard: React.FC = () => {
                       {resposta.status === 'Enviado' ? 'Corrigir' : 'Ver'}
                     </Button>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-card rounded-xl p-6 border border-border/50 animate-slide-up" style={{ animationDelay: '200ms' }}>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display font-semibold text-lg text-foreground flex items-center gap-2">
-              <ClipboardList className="w-5 h-5 text-primary" />
-              Questões criadas
-            </h3>
-            <Link to="/provas">
-              <Button variant="ghost" size="sm">
-                Ver todas
-                <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
-            </Link>
-          </div>
-          {questoesCriadas.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              Nenhuma questão cadastrada ainda.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {questoesCriadas.map((questao) => (
-                <div key={questao.id} className="rounded-lg border border-border/60 p-4">
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Prova: {questao.provaTitulo}
-                  </p>
-                  <p className="font-medium text-foreground">{questao.enunciado}</p>
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    Tipo: {questao.tipo === 'aberta' ? 'Resposta aberta' : 'Multipla escolha'} • Pontos: {questao.pontos ?? 0}
-                  </div>
-                  <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    {questao.tipo === 'aberta' ? (
-                      <div className="text-muted-foreground">Resposta aberta</div>
-                    ) : (
-                      questao.opcoes.map((opcao, index) => (
-                        <div
-                          key={`${questao.id}-${index}`}
-                          className={index === questao.corretaIndex ? 'text-success font-medium' : ''}
-                        >
-                          {String.fromCharCode(65 + index)}) {opcao}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  {questao.tipo !== 'aberta' && questao.corretaIndex !== null && (
-                    <div className="mt-2 text-xs text-success">
-                      Resposta correta: {String.fromCharCode(65 + questao.corretaIndex)}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>

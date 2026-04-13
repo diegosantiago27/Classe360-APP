@@ -341,7 +341,7 @@ const NovaAtividade: React.FC = () => {
             </Button>
           </Link>
           <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">Criar Atividade / Prova</h1>
+            <h1 className="font-display text-3xl font-bold text-foreground">Criar Atividade</h1>
             <p className="text-muted-foreground">Cadastre a atividade e defina as questões.</p>
           </div>
         </div>
@@ -420,11 +420,11 @@ const NovaAtividade: React.FC = () => {
                 <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Título da Atividade / Prova</Label>
+                <Label>Título da Atividade</Label>
                 <Input
                   value={titulo}
                   onChange={(e) => setTitulo(e.target.value)}
-                  placeholder="Ex: Prova de Matemática - Unidade 1"
+                  placeholder="Ex: Atividade de Matemática — Unidade 1"
                   required
                 />
               </div>

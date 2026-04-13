@@ -20,6 +20,7 @@ public class EntregaAtividade {
     @ManyToOne(optional = false)
     private Usuario aluno;
 
+    @Column(columnDefinition = "TEXT")
     private String resposta;
 
     private Double nota;

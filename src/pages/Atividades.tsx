@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, CheckCircle2, ClipboardList, MapPin, Pencil, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
@@ -33,7 +33,9 @@ import {
   listUsuariosApi,
   saveAtividadeApi,
   saveEntregaAtividadeApi,
+  type AtividadeApi,
 } from '@/lib/entityCrudApi';
+import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
 import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
@@ -89,6 +91,18 @@ const parseAtividadeMeta = (value?: string): AtividadeMeta => {
     return { descricao: value };
   }
 };
+
+const UNDO_DELETE_MS = 25_000;
+
+function cloneAtividade(a: Atividade): Atividade {
+  return {
+    ...a,
+    questoes: a.questoes?.map((q) => ({
+      ...q,
+      opcoes: [...q.opcoes],
+    })),
+  };
+}
 
 const storageKey = 'school-compass:atividades';
 const entregasStorageKey = 'school-compass:atividades-entregas';
@@ -220,6 +234,10 @@ const Atividades: React.FC = () => {
     () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
   );
   const [storageTick, setStorageTick] = useState(0);
+  const [undoDelete, setUndoDelete] = useState<{ atividade: Atividade; modo: 'api' | 'local' } | null>(
+    null,
+  );
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [correcaoOpen, setCorrecaoOpen] = useState(false);
   const [entregaSelecionada, setEntregaSelecionada] = useState<AtividadeEntrega | null>(null);
   const [notaDraft, setNotaDraft] = useState<number>(0);
@@ -297,9 +315,11 @@ const Atividades: React.FC = () => {
           turmas: [],
         }));
 
+        const usersComTurmas = mergeAlunosTurmasFromApi(usersMapped, turmasApi);
+
         const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
         const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
-        const userNomeById = new Map(usersMapped.map((u) => [u.id, u.nome]));
+        const userNomeById = new Map(usersComTurmas.map((u) => [u.id, u.nome]));
 
         const atividadesMapped: Atividade[] = atividadesApi.map((a) => {
           const meta = parseAtividadeMeta(a.descricao ?? '');
@@ -340,7 +360,7 @@ const Atividades: React.FC = () => {
         saveToStorage(turmasStorageKey, turmasMapped);
         saveToStorage(disciplinasStorageKey, disciplinasMapped);
         saveToStorage(periodosStorageKey, periodosMapped);
-        saveToStorage(usersStorageKey, usersMapped);
+        saveToStorage(usersStorageKey, usersComTurmas);
         saveToStorage(storageKey, atividadesMapped);
         saveToStorage(entregasStorageKey, entregasMapped);
         saveToStorage(vinculosStorageKey, vincRows as DisciplinaVinculoAtividade[]);
@@ -377,6 +397,23 @@ const Atividades: React.FC = () => {
     });
   }, []);
 
+  const clearUndoTimer = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearUndoTimer(), []);
+
+  const scheduleUndoExpiry = () => {
+    clearUndoTimer();
+    undoTimerRef.current = setTimeout(() => {
+      setUndoDelete(null);
+      undoTimerRef.current = null;
+    }, UNDO_DELETE_MS);
+  };
+
   const disciplinasDisponiveis = useMemo(
     () => loadFromStorage<CatalogItem[]>(disciplinasStorageKey, isApiEnabled() ? [] : defaultDisciplinas),
     [storageTick],
@@ -409,6 +446,52 @@ const Atividades: React.FC = () => {
     () => turmasDisponiveis.map((item) => item.nome),
     [turmasDisponiveis],
   );
+
+  const buildAtividadeApiPayload = (a: Atividade): AtividadeApi => {
+    const turmaId = turmasDisponiveis.find((t) => t.nome === a.turma)?.id;
+    const disciplinaId = disciplinasDisponiveis.find((d) => d.nome === a.disciplina)?.id;
+    return {
+      id: undefined,
+      titulo: a.titulo,
+      turmaId: turmaId ? Number(turmaId) : null,
+      disciplinaId: disciplinaId ? Number(disciplinaId) : null,
+      dataEntrega: a.data || a.entrega || '',
+      descricao: JSON.stringify({
+        descricao: a.descricao,
+        periodo: a.periodo,
+        sala: a.sala,
+        horario: a.horario,
+        instrucoes: a.instrucoes,
+        status: a.status,
+        questoes: a.questoes ?? [],
+        professorId: a.professorId ?? user?.id ?? '',
+        professorNome: a.professorNome ?? user?.nome ?? '',
+      }),
+    };
+  };
+
+  const handleRevertAtividade = () => {
+    if (!undoDelete) return;
+    const { atividade, modo } = undoDelete;
+    clearUndoTimer();
+    setUndoDelete(null);
+    if (modo === 'api') {
+      void saveAtividadeApi(buildAtividadeApiPayload(atividade))
+        .then(() => refreshFromApi())
+        .catch(() => window.alert('Nao foi possivel restaurar a atividade. Tente criar novamente.'));
+      return;
+    }
+    setAtividades((prev) => {
+      const next = [cloneAtividade(atividade), ...prev];
+      saveToStorage(storageKey, next);
+      return next;
+    });
+  };
+
+  const handleDismissUndoAtividade = () => {
+    clearUndoTimer();
+    setUndoDelete(null);
+  };
 
   /** Turmas às quais o aluno pertence (perfil, auth e vínculos com lista de alunos). */
   const turmasKeysDoAluno = useMemo(() => {
@@ -788,21 +871,50 @@ const Atividades: React.FC = () => {
       `Deseja remover a atividade "${atividade.titulo}"?`,
     );
     if (!confirmed) return;
+    const snapshot = cloneAtividade(atividade);
+    clearUndoTimer();
+    setUndoDelete(null);
+
     if (isApiEnabled() && Number.isFinite(Number(atividade.id))) {
       void deleteAtividadeApi(Number(atividade.id))
-        .then(() => refreshFromApi())
-        .catch(() => null);
+        .then(() => {
+          setUndoDelete({ atividade: snapshot, modo: 'api' });
+          scheduleUndoExpiry();
+          return refreshFromApi();
+        })
+        .catch(() => window.alert('Nao foi possivel remover a atividade.'));
       return;
     }
     const updated = atividades.filter((item) => item.id !== atividade.id);
     setAtividades(updated);
     saveToStorage(storageKey, updated);
+    setUndoDelete({ atividade: snapshot, modo: 'local' });
+    scheduleUndoExpiry();
   };
 
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {!isAluno && undoDelete && (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-lg border border-border bg-muted/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p className="text-sm text-foreground">
+              Atividade &quot;{undoDelete.atividade.titulo}&quot; removida. Voce pode reverter agora se foi por
+              engano.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="default" onClick={handleRevertAtividade}>
+                Reverter
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={handleDismissUndoAtividade}>
+                Descartar
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">

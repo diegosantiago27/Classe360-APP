@@ -26,11 +26,27 @@ import {
   turnoNomeParaTipo,
   turnoTipoParaIdPadrao,
 } from '@/lib/turnosCatalog';
+import { professorTemAcessoTurma, rotuloProfessoresTurma } from '@/lib/professorTurmaUtils';
 import { loadVinculosDisciplinaTurma, type VinculoDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 const getSerieNumero = (nomeTurma: string) => nomeTurma.match(/(\d+)/)?.[1] ?? '';
+
+const apenasDigitos = (value: string) => value.replace(/\D/g, '');
+
+/** Busca por nome (parcial) ou CPF (com ou sem pontuação). */
+function alunoCombinaComBusca(nome: string, cpf: string | undefined, termoBruto: string): boolean {
+  const termo = termoBruto.trim().toLowerCase();
+  if (!termo) return true;
+  if (nome.toLowerCase().includes(termo)) return true;
+  const cpfLower = (cpf ?? '').toLowerCase();
+  if (cpfLower.includes(termo)) return true;
+  const digitosCpf = apenasDigitos(cpf ?? '');
+  const digitosTermo = apenasDigitos(termoBruto);
+  if (digitosTermo.length > 0 && digitosCpf.includes(digitosTermo)) return true;
+  return false;
+}
 
 interface UsuarioApi {
   id: number;
@@ -163,9 +179,7 @@ const TurmaDetalhe: React.FC = () => {
       return true;
     }
     if (user.perfil === UserProfile.PROFESSOR) {
-      return vinculos.some(
-        (v) => v.turmaId === turma.id && (v.professorId === user.id || v.professorNome === user.nome),
-      );
+      return professorTemAcessoTurma(String(user.id ?? ''), user.nome, turma, vinculos);
     }
     if (user.perfil === UserProfile.ALUNO) {
       const atribuidoNosVinculos = vinculos.some(
@@ -177,13 +191,14 @@ const TurmaDetalhe: React.FC = () => {
     }
     return false;
   }, [turma, user, usuarios, vinculos]);
-  const professorDaTurma = useMemo(() => {
-    if (!turma) return '-';
-    const professorVinculado = vinculos.find(
-      (v) => v.turmaId === turma.id && v.professorNome?.trim(),
-    )?.professorNome;
-    return professorVinculado || turma.professor || '-';
-  }, [turma, vinculos]);
+  const professoresDaTurmaRotulo = useMemo(() => {
+    if (!turma) return '—';
+    if (user?.perfil === UserProfile.PROFESSOR) {
+      return user.nome?.trim() || '—';
+    }
+    const rotulo = rotuloProfessoresTurma(turma, vinculos, usuarios);
+    return rotulo || '—';
+  }, [turma, vinculos, usuarios, user]);
 
   const alunosDaTurma = useMemo(() => {
     if (!turma) return [];
@@ -223,30 +238,25 @@ const TurmaDetalhe: React.FC = () => {
     return Array.from(unicos.values()).sort((a, b) => a.nome.localeCompare(b.nome));
   }, [turma, usuarios, vinculos]);
   const alunosFiltrados = useMemo(() => {
-    const termo = buscaAluno.trim().toLowerCase();
+    const termo = buscaAluno.trim();
     if (!termo) return alunosDaTurma;
-    return alunosDaTurma.filter((aluno) => {
-      const nome = aluno.nome.toLowerCase();
-      const cpf = (aluno.cpf ?? '').toLowerCase();
-      return nome.includes(termo) || cpf.includes(termo);
-    });
+    return alunosDaTurma.filter((aluno) => alunoCombinaComBusca(aluno.nome, aluno.cpf, termo));
   }, [alunosDaTurma, buscaAluno]);
-  const podeGerenciarAlunos = user?.perfil === UserProfile.ADMINISTRADOR;
+  const podeGerenciarAlunos =
+    user?.perfil === UserProfile.ADMINISTRADOR ||
+    user?.perfil === UserProfile.GESTOR ||
+    user?.perfil === UserProfile.SECRETARIA;
   const turmasDestino = useMemo(
     () => turmas.filter((t) => t.id !== turma?.id),
     [turma?.id, turmas],
   );
   const resultadosBuscaVinculacao = useMemo(() => {
-    const termo = buscaAluno.trim().toLowerCase();
+    const termo = buscaAluno.trim();
     if (!termo) return [];
     const alunosAtivos = usuarios.filter(
       (u) => u.perfil === UserProfile.ALUNO && u.status === 'ativo',
     );
-    return alunosAtivos.filter((aluno) => {
-      const nome = aluno.nome.toLowerCase();
-      const cpf = (aluno.cpf ?? '').toLowerCase();
-      return nome.includes(termo) || cpf.includes(termo);
-    });
+    return alunosAtivos.filter((aluno) => alunoCombinaComBusca(aluno.nome, aluno.cpf, termo));
   }, [buscaAluno, usuarios]);
   const idsAlunosDaTurma = useMemo(
     () => new Set(alunosDaTurma.map((a) => a.id)),
@@ -533,9 +543,11 @@ const TurmaDetalhe: React.FC = () => {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Professor</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {user?.perfil === UserProfile.PROFESSOR ? 'Professor' : 'Professores'}
+              </CardTitle>
             </CardHeader>
-            <CardContent className="text-xl font-semibold">{professorDaTurma}</CardContent>
+            <CardContent className="text-base font-semibold leading-snug">{professoresDaTurmaRotulo}</CardContent>
           </Card>
           <Card>
             <CardHeader>

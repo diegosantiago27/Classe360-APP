@@ -102,6 +102,27 @@ const bimestreNumCanon = (bimestreOuPeriodo: string) => {
 const chaveGrupoProva = (disciplina: string, turma: string, bimestreOuPeriodo: string) =>
   `${normalizeText(disciplina)}::${normalizeText(turma)}::${bimestreNumCanon(bimestreOuPeriodo)}`;
 
+const chaveDisciplinaTurma = (disciplina: string, turma: string) =>
+  `${normalizeText(disciplina)}::${normalizeText(turma)}`;
+
+/** Situação final: "Aprovado" só vale após notas nos 4 bimestres (1–4) na mesma disciplina/turma. */
+const situacaoComRegraAnual = (
+  media: number | null | undefined,
+  origem: 'lancamento' | 'legado',
+  disciplina: string,
+  turma: string | undefined,
+  bimestre: string | undefined,
+  bimestresComNotaPorPar: Map<string, Set<string>>,
+): SituacaoNota => {
+  const base = situacaoFromMedia(media);
+  if (base !== 'Aprovado' || origem !== 'lancamento') return base;
+  if (!turma?.trim() || !bimestre?.trim()) return base;
+  const key = chaveDisciplinaTurma(disciplina, turma);
+  const set = bimestresComNotaPorPar.get(key) ?? new Set();
+  const quatroOk = ['1', '2', '3', '4'].every((b) => set.has(b));
+  return quatroOk ? 'Aprovado' : 'Pendente';
+};
+
 const MinhasNotas: React.FC = () => {
   const { user } = useAuth();
   const [notasAlunos, setNotasAlunos] = useState<NotaAluno[]>(() =>
@@ -327,7 +348,6 @@ const MinhasNotas: React.FC = () => {
         media,
         trabalhosNota,
         provasNota,
-        situacao: situacaoFromMedia(media),
         ultimaNota: detalhe,
         origem: 'lancamento' as const,
       };
@@ -344,7 +364,6 @@ const MinhasNotas: React.FC = () => {
         trabalhosNota: null,
         provasNota: g.mediaProvas,
         media: g.mediaProvas,
-        situacao: situacaoFromMedia(g.mediaProvas),
         ultimaNota: 'Média das provas corrigidas',
         origem: 'lancamento' as const,
       });
@@ -363,7 +382,29 @@ const MinhasNotas: React.FC = () => {
       origem: 'legado' as const,
     }));
 
-    return [...doLancamento, ...extrasProvas, ...doLegado];
+    const lancamentoEExtras = [...doLancamento, ...extrasProvas];
+    const bimestresComNotaPorPar = new Map<string, Set<string>>();
+    lancamentoEExtras.forEach((row) => {
+      if (typeof row.media !== 'number' || !row.bimestre?.trim() || !row.turma?.trim()) return;
+      const key = chaveDisciplinaTurma(row.disciplina, row.turma);
+      const bi = bimestreNumCanon(row.bimestre);
+      if (!bimestresComNotaPorPar.has(key)) bimestresComNotaPorPar.set(key, new Set());
+      bimestresComNotaPorPar.get(key)!.add(bi);
+    });
+
+    const comSituacaoLancamento = lancamentoEExtras.map((row) => ({
+      ...row,
+      situacao: situacaoComRegraAnual(
+        row.media,
+        'lancamento',
+        row.disciplina,
+        row.turma,
+        row.bimestre,
+        bimestresComNotaPorPar,
+      ),
+    }));
+
+    return [...comSituacaoLancamento, ...doLegado];
   }, [notasDoLancamento, notasLegadoFiltradas, gruposNotaProva]);
 
   const mediaGeral = useMemo(() => {

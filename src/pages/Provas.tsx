@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, FileText, MapPin, Pencil, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,7 @@ import {
   listTurmasApi,
   listUsuariosApi,
   saveProvaApi,
+  type ProvaApi,
 } from '@/lib/entityCrudApi';
 import { mapTurnoFieldsFromTurmaApi } from '@/lib/turnosCatalog';
 
@@ -76,6 +77,18 @@ const parseProvaMeta = (value?: string): ProvaMeta => {
     return {};
   }
 };
+
+const UNDO_DELETE_MS = 25_000;
+
+function cloneProva(p: Prova): Prova {
+  return {
+    ...p,
+    questoes: p.questoes?.map((q) => ({
+      ...q,
+      opcoes: [...q.opcoes],
+    })),
+  };
+}
 
 const storageKey = 'school-compass:provas';
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
@@ -128,6 +141,8 @@ const Provas: React.FC = () => {
     () => loadFromStorage<Prova[]>(storageKey, isApiEnabled() ? [] : defaultProvas),
   );
   const [storageTick, setStorageTick] = useState(0);
+  const [undoDelete, setUndoDelete] = useState<{ prova: Prova; modo: 'api' | 'local' } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Omit<Prova, 'id'>>({
@@ -249,6 +264,23 @@ const Provas: React.FC = () => {
       setStorageTick((prev) => prev + 1);
     });
   }, []);
+
+  const clearUndoTimer = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearUndoTimer(), []);
+
+  const scheduleUndoExpiry = () => {
+    clearUndoTimer();
+    undoTimerRef.current = setTimeout(() => {
+      setUndoDelete(null);
+      undoTimerRef.current = null;
+    }, UNDO_DELETE_MS);
+  };
   const totalAgendadas = useMemo(
     () => provas.filter((prova) => prova.status === 'Agendada').length,
     [provas],
@@ -300,6 +332,52 @@ const Provas: React.FC = () => {
   const hasTurmas = turmaOptions.length > 0;
   const hasDisciplinas = disciplinaOptions.length > 0;
   const hasPeriodos = periodoOptions.length > 0;
+
+  const buildProvaApiPayload = (prova: Prova): ProvaApi => {
+    const turmaId = turmasDisponiveis.find((t) => t.nome === prova.turma)?.id;
+    const disciplinaId = disciplinasDisponiveis.find((d) => d.nome === prova.disciplina)?.id;
+    const turmaIdNum = Number(turmaId);
+    const disciplinaIdNum = Number(disciplinaId);
+    const professorIdNum = Number(user?.id);
+    return {
+      id: undefined,
+      titulo: prova.titulo,
+      descricao: JSON.stringify({ sala: prova.sala, questoes: prova.questoes ?? [] }),
+      turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
+      disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
+      professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
+      data: prova.data,
+      ativa: prova.status !== 'Concluida',
+      periodo: prova.periodo,
+      horario: prova.horario,
+      instrucoes: prova.instrucoes,
+      status: prova.status,
+      publicada: prova.publicada,
+    };
+  };
+
+  const handleRevertProva = () => {
+    if (!undoDelete) return;
+    const { prova, modo } = undoDelete;
+    clearUndoTimer();
+    setUndoDelete(null);
+    if (modo === 'api') {
+      void saveProvaApi(buildProvaApiPayload(prova))
+        .then(() => refreshFromApi())
+        .catch(() => window.alert('Nao foi possivel restaurar a prova. Tente criar novamente.'));
+      return;
+    }
+    setProvas((prev) => {
+      const next = [cloneProva(prova), ...prev];
+      saveToStorage(storageKey, next);
+      return next;
+    });
+  };
+
+  const handleDismissUndoProva = () => {
+    clearUndoTimer();
+    setUndoDelete(null);
+  };
 
   const handleOpenCreate = () => {
     setEditingId(null);
@@ -556,15 +634,25 @@ const Provas: React.FC = () => {
       `Deseja remover a prova "${prova.titulo}" da turma ${prova.turma}?`,
     );
     if (!confirmed) return;
+    const snapshot = cloneProva(prova);
+    clearUndoTimer();
+    setUndoDelete(null);
+
     if (isApiEnabled() && Number.isFinite(Number(prova.id))) {
       void deleteProvaApi(Number(prova.id))
-        .then(() => refreshFromApi())
-        .catch(() => null);
+        .then(() => {
+          setUndoDelete({ prova: snapshot, modo: 'api' });
+          scheduleUndoExpiry();
+          return refreshFromApi();
+        })
+        .catch(() => window.alert('Nao foi possivel remover a prova.'));
       return;
     }
     const updated = provas.filter((item) => item.id !== prova.id);
     setProvas(updated);
     saveToStorage(storageKey, updated);
+    setUndoDelete({ prova: snapshot, modo: 'local' });
+    scheduleUndoExpiry();
   };
 
   const handleTogglePublicada = (provaId: string) => {
@@ -607,6 +695,24 @@ const Provas: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {undoDelete && (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-lg border border-border bg-muted/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p className="text-sm text-foreground">
+              Prova &quot;{undoDelete.prova.titulo}&quot; removida. Voce pode reverter agora se foi por engano.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="default" onClick={handleRevertProva}>
+                Reverter
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={handleDismissUndoProva}>
+                Descartar
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">

@@ -228,11 +228,16 @@ const AtividadeRealizar: React.FC = () => {
       const alunoIdNum = Number(user.id);
       if (Number.isFinite(atividadeIdNum) && Number.isFinite(alunoIdNum)) {
         try {
+          const respostaPayload = JSON.stringify({
+            resposta: resposta.trim(),
+            linkAnexo: linkAnexo.trim(),
+            respostasObjetivas,
+          });
           await saveEntregaAtividadeApi({
             id: undefined,
             atividadeId: atividadeIdNum,
             alunoId: alunoIdNum,
-            resposta: resposta.trim(),
+            resposta: respostaPayload,
             nota: null,
             corrigido: false,
           });

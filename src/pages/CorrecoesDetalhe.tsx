@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getMinhaRespostaRelacional,
@@ -21,6 +22,7 @@ import {
   type ProvaRespostaApi,
 } from '@/lib/provasRelApi';
 import {
+  getInstituicaoApi,
   isApiEnabled,
   listAtividadesApi,
   listDisciplinasApi,
@@ -49,8 +51,68 @@ interface Atividade {
   turma: string;
   disciplina: string;
   turno?: string;
+  /** Bimestre / período letivo (JSON em `descricao`). */
+  periodo?: string;
+  sala?: string;
+  horario?: string;
+  instrucoes?: string;
+  /** Texto descritivo da atividade (JSON em `descricao`). */
+  descricaoTexto?: string;
+  /** ISO `YYYY-MM-DD` da API. */
+  dataEntrega?: string;
   questoes?: AtividadeQuestion[];
 }
+
+/** Mesmo formato salvo em `atividade.descricao` (JSON) pela tela de criação. */
+interface AtividadeDescricaoMeta {
+  descricao?: string;
+  periodo?: string;
+  sala?: string;
+  horario?: string;
+  instrucoes?: string;
+  turno?: string;
+  questoes?: Array<{
+    id: string;
+    enunciado?: string;
+    tipo?: string;
+    opcoes?: string[];
+    corretaIndex?: number | null;
+  }>;
+}
+
+const parseAtividadeDescricaoApi = (value?: string): AtividadeDescricaoMeta => {
+  if (!value?.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as AtividadeDescricaoMeta;
+    if (parsed && typeof parsed === 'object') return parsed;
+    return {};
+  } catch {
+    return {};
+  }
+};
+
+const parseEntregaRespostaApi = (value?: string) => {
+  if (!value?.trim()) {
+    return { resposta: '', linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  }
+  try {
+    const parsed = JSON.parse(value) as {
+      resposta?: string;
+      linkAnexo?: string;
+      respostasObjetivas?: AtividadeEntrega['respostasObjetivas'];
+    };
+    if (parsed && typeof parsed === 'object') {
+      return {
+        resposta: parsed.resposta ?? '',
+        linkAnexo: parsed.linkAnexo ?? '',
+        respostasObjetivas: parsed.respostasObjetivas ?? [],
+      };
+    }
+    return { resposta: value, linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  } catch {
+    return { resposta: value, linkAnexo: '', respostasObjetivas: [] as AtividadeEntrega['respostasObjetivas'] };
+  }
+};
 
 interface AtividadeEntrega {
   id: string;
@@ -83,6 +145,10 @@ interface ProvaCor {
   disciplina: string;
   periodo?: string;
   turno?: string;
+  data?: string;
+  horario?: string;
+  instrucoes?: string;
+  professorNome?: string;
   questoes?: ProvaQuestao[];
 }
 
@@ -157,6 +223,41 @@ const getTurmaKey = (value: string) => {
   return normalized.replace(/[^a-z0-9]/g, '');
 };
 
+const formatDataBR = (value?: string | unknown) => {
+  if (value == null) return '';
+  if (Array.isArray(value) && value.length >= 3) {
+    const y = Number(value[0]);
+    const m = Number(value[1]);
+    const day = Number(value[2]);
+    if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(day)) {
+      return new Date(y, m - 1, day).toLocaleDateString('pt-BR');
+    }
+  }
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const d = raw.includes('T') ? new Date(raw) : new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('pt-BR');
+};
+
+const formatDataHoraBR = (iso?: string) => {
+  if (!iso?.trim()) return '';
+  const d = new Date(iso.trim());
+  if (Number.isNaN(d.getTime())) return iso.trim();
+  return d.toLocaleString('pt-BR');
+};
+
+const DetalheMetadado: React.FC<{ label: string; value?: string | null }> = ({ label, value }) => {
+  const t = typeof value === 'string' ? value.trim() : '';
+  if (!t) return null;
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="break-words text-foreground">{t}</div>
+    </div>
+  );
+};
+
 export default function CorrecoesDetalhe() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -185,6 +286,11 @@ export default function CorrecoesDetalhe() {
     };
   }, [state]);
 
+  const [storageTick, setStorageTick] = useState(0);
+  const [entregas, setEntregas] = useState<AtividadeEntrega[]>(
+    () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
+  );
+
   const usuarios = useMemo(
     () => loadFromStorage<StoredUser[]>(usersStorageKey, isApiEnabled() ? [] : defaultUsers),
     [storageTick],
@@ -193,10 +299,6 @@ export default function CorrecoesDetalhe() {
     () => loadFromStorage<Atividade[]>(atividadesStorageKey, []),
     [storageTick],
   );
-  const [entregas, setEntregas] = useState<AtividadeEntrega[]>(
-    () => loadFromStorage<AtividadeEntrega[]>(entregasStorageKey, []),
-  );
-  const [storageTick, setStorageTick] = useState(0);
   const [avaliacoesDraft, setAvaliacoesDraft] = useState<
     Record<string, { nota: string; feedback: string }>
   >({});
@@ -205,17 +307,32 @@ export default function CorrecoesDetalhe() {
   const [respostaAlvo, setRespostaAlvo] = useState<ProvaRespostaCor | null>(null);
   const [carregandoProva, setCarregandoProva] = useState(false);
   const [draftProva, setDraftProva] = useState({ nota: '', feedback: '' });
+  const [instituicaoNome, setInstituicaoNome] = useState<string>('');
+
+  useEffect(() => {
+    if (isApiEnabled()) return;
+    const stored = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
+    const n = stored?.nome?.trim();
+    if (n) setInstituicaoNome(n);
+  }, []);
 
   useEffect(() => {
     if (!isApiEnabled()) return;
     void Promise.all([
+      getInstituicaoApi().catch(() => null),
       listUsuariosApi(),
       listDisciplinasApi(),
       listTurmasApi(),
       listAtividadesApi(),
       listEntregasAtividadesApi(),
     ])
-      .then(([usuariosApi, disciplinasApi, turmasApi, atividadesApi, entregasApi]) => {
+      .then(([instituicao, usuariosApi, disciplinasApi, turmasApi, atividadesApi, entregasApi]) => {
+        let nomeInst = instituicao?.nome?.trim();
+        if (!nomeInst) {
+          const stored = loadFromStorage(instituicaoStorageKey, defaultInstituicao);
+          nomeInst = stored?.nome?.trim() ?? '';
+        }
+        if (nomeInst) setInstituicaoNome(nomeInst);
         const usuarioNomeById = new Map(usuariosApi.map((u) => [String(u.id ?? ''), u.nome ?? '']));
         const turmaNomeById = new Map(
           turmasApi.map((t) => [String(t.id ?? ''), t.nome ?? `Turma ${t.id ?? ''}`]),
@@ -224,25 +341,46 @@ export default function CorrecoesDetalhe() {
           disciplinasApi.map((d) => [String(d.id ?? ''), d.nome ?? `Disciplina ${d.id ?? ''}`]),
         );
 
-        const atividadesMapped: Atividade[] = atividadesApi.map((a) => ({
-          id: String(a.id ?? ''),
-          titulo: a.titulo ?? '',
-          turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
-          disciplina:
-            disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
-          turno: '',
-          questoes: [],
-        }));
-        const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => ({
-          id: String(e.id ?? ''),
-          atividadeId: String(e.atividadeId ?? ''),
-          alunoId: String(e.alunoId ?? ''),
-          alunoNome: usuarioNomeById.get(String(e.alunoId ?? '')) ?? '',
-          resposta: e.resposta ?? '',
-          enviadoEm: '',
-          nota: e.nota ?? null,
-          corrigidoEm: e.corrigido ? new Date().toISOString() : undefined,
-        }));
+        const atividadesMapped: Atividade[] = atividadesApi.map((a) => {
+          const meta = parseAtividadeDescricaoApi(a.descricao ?? '');
+          const questoesRaw = meta.questoes ?? [];
+          const questoes: AtividadeQuestion[] = questoesRaw.map((q) => ({
+            id: String(q.id ?? ''),
+            enunciado: q.enunciado ?? '',
+            tipo: q.tipo === 'aberta' || q.tipo === 'dissertativa' ? 'aberta' : 'multipla',
+            opcoes: Array.isArray(q.opcoes) ? q.opcoes : [],
+            corretaIndex: q.corretaIndex ?? null,
+          }));
+          return {
+            id: String(a.id ?? ''),
+            titulo: a.titulo ?? '',
+            turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? `Turma ${a.turmaId ?? ''}`,
+            disciplina:
+              disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? `Disciplina ${a.disciplinaId ?? ''}`,
+            turno: meta.turno ?? '',
+            periodo: meta.periodo ?? '',
+            sala: meta.sala ?? '',
+            horario: meta.horario ?? '',
+            instrucoes: meta.instrucoes ?? '',
+            descricaoTexto: meta.descricao ?? '',
+            dataEntrega: a.dataEntrega ?? '',
+            questoes,
+          };
+        });
+        const entregasMapped: AtividadeEntrega[] = entregasApi.map((e) => {
+          const parsed = parseEntregaRespostaApi(e.resposta ?? '');
+          return {
+            id: String(e.id ?? ''),
+            atividadeId: String(e.atividadeId ?? ''),
+            alunoId: String(e.alunoId ?? ''),
+            alunoNome: usuarioNomeById.get(String(e.alunoId ?? '')) ?? '',
+            resposta: parsed.resposta,
+            respostasObjetivas: parsed.respostasObjetivas,
+            enviadoEm: '',
+            nota: e.nota ?? null,
+            corrigidoEm: e.corrigido ? new Date().toISOString() : undefined,
+          };
+        });
 
         saveToStorage(atividadesStorageKey, atividadesMapped);
         saveToStorage(entregasStorageKey, entregasMapped);
@@ -303,6 +441,7 @@ export default function CorrecoesDetalhe() {
   }, [storageTick]);
 
   useEffect(() => {
+    if (state?.tipo !== 'atividades') return;
     setAvaliacoesDraft((prev) => {
       const next = { ...prev };
       correcoes.forEach(({ entrega }) => {
@@ -315,26 +454,32 @@ export default function CorrecoesDetalhe() {
       });
       return next;
     });
-  }, [correcoes]);
+  }, [correcoes, state?.tipo]);
 
   const isProvasFluxo = state?.tipo === 'provas';
   const provaIdNav = state?.provaId;
   const alunoIdNav = state?.alunoId;
 
   const subtituloCorrecao = useMemo(() => {
+    const inst = instituicaoNome?.trim();
     if (state?.tipo === 'provas') {
       if (provaAlvo) {
         const partes = [
+          inst,
           provaAlvo.disciplina || state?.materia,
           provaAlvo.turma || state?.turma,
           provaAlvo.periodo?.trim() || null,
         ].filter((p): p is string => Boolean(p && String(p).trim()));
         return partes.join(' • ');
       }
-      return [state?.materia, state?.turma].filter(Boolean).join(' • ');
+      return [inst, state?.materia, state?.turma].filter(Boolean).join(' • ');
     }
-    return [state?.materia, state?.turma].filter(Boolean).join(' • ');
-  }, [state?.tipo, state?.materia, state?.turma, provaAlvo]);
+    const periodoAtiv = correcoes[0]?.atividade.periodo?.trim();
+    const partes = [inst, state?.materia, state?.turma, periodoAtiv].filter(
+      (p): p is string => Boolean(p && String(p).trim()),
+    );
+    return partes.join(' • ');
+  }, [state?.tipo, state?.materia, state?.turma, provaAlvo, instituicaoNome, correcoes]);
 
   useEffect(() => {
     if (!isProvasFluxo || !provaIdNav || !alunoIdNav) {
@@ -360,6 +505,10 @@ export default function CorrecoesDetalhe() {
               disciplina: mapped.disciplina,
               periodo: mapped.periodo,
               turno: mapped.turno,
+              data: mapped.data,
+              horario: mapped.horario,
+              instrucoes: mapped.instrucoes,
+              professorNome: api.professorNome ?? '',
               questoes: (mapped.questoes ?? []).map((q) => ({
                 id: q.id,
                 enunciado: q.enunciado,
@@ -567,6 +716,19 @@ export default function CorrecoesDetalhe() {
                 )}
               </div>
 
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <DetalheMetadado label="Instituição" value={instituicaoNome} />
+                <DetalheMetadado label="Bimestre" value={provaAlvo.periodo} />
+                <DetalheMetadado label="Data da prova" value={formatDataBR(provaAlvo.data)} />
+                <DetalheMetadado label="Horário" value={provaAlvo.horario} />
+                <DetalheMetadado label="Turno" value={provaAlvo.turno} />
+                <DetalheMetadado label="Professor" value={provaAlvo.professorNome} />
+                <DetalheMetadado label="Aluno" value={respostaAlvo.alunoNome ?? `Aluno ${respostaAlvo.alunoId}`} />
+                <DetalheMetadado label="Enviado em" value={formatDataHoraBR(respostaAlvo.enviadoEm)} />
+                <DetalheMetadado label="Corrigido em" value={formatDataHoraBR(respostaAlvo.corrigidoEm)} />
+                <DetalheMetadado label="Instruções" value={provaAlvo.instrucoes} />
+              </div>
+
               {(provaAlvo.questoes ?? []).length === 0 ? (
                 <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
                   Esta prova não possui questões cadastradas.
@@ -710,6 +872,17 @@ export default function CorrecoesDetalhe() {
                       Corrigida • Nota {entrega.nota.toFixed(1)}
                     </Badge>
                   )}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <DetalheMetadado label="Instituição" value={instituicaoNome} />
+                  <DetalheMetadado label="Bimestre" value={atividade.periodo} />
+                  <DetalheMetadado label="Data de entrega" value={formatDataBR(atividade.dataEntrega)} />
+                  <DetalheMetadado label="Turno" value={atividade.turno} />
+                  <DetalheMetadado label="Sala" value={atividade.sala} />
+                  <DetalheMetadado label="Horário" value={atividade.horario} />
+                  <DetalheMetadado label="Descrição da atividade" value={atividade.descricaoTexto} />
+                  <DetalheMetadado label="Instruções" value={atividade.instrucoes} />
                 </div>
 
                 {(atividade.questoes ?? []).length === 0 ? (

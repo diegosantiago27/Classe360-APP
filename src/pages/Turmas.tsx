@@ -33,6 +33,7 @@ import {
   type TurnoOption,
 } from '@/lib/turnosCatalog';
 import { mergeAlunosTurmasFromApi } from '@/lib/turmasUsuariosMerge';
+import { idsTurmasVisiveisParaProfessor, rotuloProfessoresTurma } from '@/lib/professorTurmaUtils';
 import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface DisciplinaVinculoStorage {
@@ -125,12 +126,15 @@ const Turmas: React.FC = () => {
     user?.perfil === UserProfile.ADMINISTRADOR ||
     user?.perfil === UserProfile.SECRETARIA;
   const podeVincularAlunosNaTurma =
-    user?.perfil === UserProfile.GESTOR || user?.perfil === UserProfile.ADMINISTRADOR;
+    user?.perfil === UserProfile.GESTOR ||
+    user?.perfil === UserProfile.ADMINISTRADOR ||
+    user?.perfil === UserProfile.SECRETARIA;
   const podeEditarTurma =
     user?.perfil === UserProfile.GESTOR || user?.perfil === UserProfile.ADMINISTRADOR;
   const podeRemoverTurmaAdmin = user?.perfil === UserProfile.ADMINISTRADOR;
   const podeRemoverTurmaVazia = user?.perfil === UserProfile.SECRETARIA;
   const podeRemoverTurma = podeRemoverTurmaAdmin || podeRemoverTurmaVazia;
+  const exibirColunaProfessores = user?.perfil !== UserProfile.ALUNO;
   const [turmas, setTurmas] = useState<Turma[]>(
     () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
   );
@@ -282,13 +286,9 @@ const Turmas: React.FC = () => {
     }
 
     if (isProfessorPerfil(user.perfil ?? (user as { role?: unknown }).role)) {
-      const idAtual = normalizeText(user.id);
+      const idAtual = String(user.id ?? '').trim();
       if (!idAtual) return [];
-      const turmaIdsProfessor = new Set(
-        vinculos
-          .filter((v) => normalizeText(v.professorId) === idAtual)
-          .map((v) => v.turmaId),
-      );
+      const turmaIdsProfessor = idsTurmasVisiveisParaProfessor(turmas, vinculos, idAtual, user.nome);
       return turmas.filter((turma) => turmaIdsProfessor.has(turma.id));
     }
 
@@ -355,13 +355,14 @@ const Turmas: React.FC = () => {
     () => turmasVisiveis.filter((turma) => turma.status === 'Ativa').length,
     [turmasVisiveis],
   );
-  const professorPorTurmaId = useMemo(() => {
+  const rotuloProfessoresPorTurmaId = useMemo(() => {
     const map = new Map<string, string>();
-    vinculos.forEach((v) => {
-      if (v.professorNome?.trim()) map.set(v.turmaId, v.professorNome.trim());
+    turmas.forEach((t) => {
+      const rotulo = rotuloProfessoresTurma(t, vinculos, usuarios);
+      if (rotulo) map.set(t.id, rotulo);
     });
     return map;
-  }, [vinculos]);
+  }, [turmas, vinculos, usuarios]);
 
   const handleOpenCreate = () => {
     setEditingId(null);
@@ -674,7 +675,14 @@ const Turmas: React.FC = () => {
               Visao geral das turmas
             </CardTitle>
             <CardDescription>
-              Lista consolidada com informacoes principais de cada turma.
+              {exibirColunaProfessores ? (
+                <>
+                  Lista consolidada por turma. A coluna Professores reúne o responsável pela turma e os docentes
+                  vinculados por disciplina (cadastro em Disciplinas).
+                </>
+              ) : (
+                <>Suas turmas vinculadas, turno, quantidade de alunos e status.</>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -692,7 +700,13 @@ const Turmas: React.FC = () => {
                   <TableRow>
                     <TableHead>Turma</TableHead>
                     <TableHead>Turno</TableHead>
-                    <TableHead>Professor</TableHead>
+                    {exibirColunaProfessores && (
+                      <TableHead>
+                        {isProfessorPerfil(user?.perfil ?? (user as { role?: unknown }).role)
+                          ? 'Professor'
+                          : 'Professores'}
+                      </TableHead>
+                    )}
                     <TableHead>Alunos</TableHead>
                     <TableHead>Status</TableHead>
                     {(podeEditarTurma || podeRemoverTurma) && (
@@ -712,7 +726,13 @@ const Turmas: React.FC = () => {
                         </Link>
                       </TableCell>
                       <TableCell>{rotuloTurnoParaExibicao(turma)}</TableCell>
-                      <TableCell>{professorPorTurmaId.get(turma.id) ?? turma.professor ?? '-'}</TableCell>
+                      {exibirColunaProfessores && (
+                        <TableCell className="max-w-[280px] whitespace-normal text-sm">
+                          {isProfessorPerfil(user?.perfil ?? (user as { role?: unknown }).role)
+                            ? user?.nome?.trim() || '—'
+                            : rotuloProfessoresPorTurmaId.get(turma.id) ?? '—'}
+                        </TableCell>
+                      )}
                       <TableCell>{alunosQuantidadeRealPorTurmaId.get(turma.id) ?? 0}</TableCell>
                       <TableCell>
                         <Badge
