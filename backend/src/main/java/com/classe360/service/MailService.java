@@ -117,4 +117,27 @@ public class MailService {
         LOG.debug("Sending password reset email to '{}'", user.getEmail());
         sendEmailFromTemplateSync(user, "mail/passwordResetEmail", "email.reset.title");
     }
+
+    /**
+     * E-mail com código numérico para redefinição de senha (entidade {@link com.classe360.domain.Usuario}).
+     */
+    @Async
+    public void sendUsuarioPasswordResetCodeEmail(String email, String nome, String codigo) {
+        if (email == null || email.isBlank()) {
+            LOG.debug("E-mail ausente para envio de código de reset");
+            return;
+        }
+        sendUsuarioPasswordResetCodeEmailSync(email, nome, codigo);
+    }
+
+    private void sendUsuarioPasswordResetCodeEmailSync(String email, String nome, String codigo) {
+        Locale locale = Locale.forLanguageTag("pt-BR");
+        Context context = new Context(locale);
+        context.setVariable("nome", nome != null ? nome : "");
+        context.setVariable("codigo", codigo);
+        context.setVariable(BASE_URL, jHipsterProperties.getMail().getBaseUrl());
+        String content = templateEngine.process("mail/passwordResetUsuarioEmail", context);
+        String subject = messageSource.getMessage("email.classe360.reset.title", null, locale);
+        sendEmailSync(email, subject, content, false, true);
+    }
 }

@@ -43,11 +43,33 @@ spring:
       auto-commit: false
   liquibase:
     contexts: dev
+  # E-mail: o código de verificação é enviado para o e-mail cadastrado do usuário (Gmail, Hotmail, etc.).
+  # Por padrão: localhost:25 (sem auth) — útil com Mailpit local ou sem SMTP.
+  #
+  # Para entregar na internet (Gmail, Outlook/Hotmail, etc.), defina variáveis de ambiente, por exemplo:
+  #   MAIL_HOST=smtp.gmail.com
+  #   MAIL_PORT=587
+  #   MAIL_USERNAME=seu@gmail.com
+  #   MAIL_PASSWORD=<senha de app do Google, não a senha da conta>
+  #   MAIL_SMTP_AUTH=true
+  #   MAIL_SMTP_STARTTLS=true
+  #   MAIL_FROM=seu@gmail.com
+  # Gmail: ative "Senha de app" em https://myaccount.google.com/apppasswords
+  # Outlook/Hotmail: MAIL_HOST=smtp-mail.outlook.com (ou smtp.office365.com para contas Microsoft 365)
+  #
+  # Mailpit local: docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit
+  #   depois MAIL_HOST=localhost MAIL_PORT=1025 (auth/starttls false)
   mail:
-    host: localhost
-    port: 25
-    username:
-    password:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:25}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:false}
   messages:
     cache-duration: PT1S # 1 second, see the ISO 8601 standard
   thymeleaf:
@@ -85,6 +107,8 @@ jhipster:
         token-validity-in-seconds-for-remember-me: 2592000
   mail: # specific JHipster mail property, for standard properties see MailProperties
     base-url: http://127.0.0.1:8080
+    # Remetente visível no cliente de e-mail — com Gmail/Outlook use o mesmo e-mail da conta SMTP (ou MAIL_FROM).
+    from: ${MAIL_FROM:${MAIL_USERNAME:classe360@localhost}}
   logging:
     use-json-format: false # By default, logs are not in Json format
     logstash: # Forward logs to logstash over a socket, used by LoggingConfiguration

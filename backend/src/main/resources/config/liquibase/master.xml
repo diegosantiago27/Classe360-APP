@@ -24,6 +24,7 @@
     <include file="config/liquibase/changelog/00000000000028_turno_catalog_turma.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/00000000000029_atividade_descricao_text.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/00000000000030_entrega_resposta_text.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/00000000000031_usuario_password_reset.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-changelog - JHipster will add liquibase changelogs here -->
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->

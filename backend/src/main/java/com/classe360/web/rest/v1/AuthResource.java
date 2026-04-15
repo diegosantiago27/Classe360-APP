@@ -6,6 +6,7 @@ import static com.classe360.security.SecurityUtils.USER_ID_CLAIM;
 
 import com.classe360.domain.Usuario;
 import com.classe360.repository.UsuarioRepository;
+import com.classe360.service.UsuarioPasswordResetService;
 import com.classe360.service.UsuarioService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -38,6 +39,7 @@ public class AuthResource {
 
     private final UsuarioRepository usuarioRepository;
     private final UsuarioService usuarioService;
+    private final UsuarioPasswordResetService usuarioPasswordResetService;
     private final PasswordEncoder passwordEncoder;
     private final JwtEncoder jwtEncoder;
 
@@ -47,11 +49,13 @@ public class AuthResource {
     public AuthResource(
         UsuarioRepository usuarioRepository,
         UsuarioService usuarioService,
+        UsuarioPasswordResetService usuarioPasswordResetService,
         PasswordEncoder passwordEncoder,
         JwtEncoder jwtEncoder
     ) {
         this.usuarioRepository = usuarioRepository;
         this.usuarioService = usuarioService;
+        this.usuarioPasswordResetService = usuarioPasswordResetService;
         this.passwordEncoder = passwordEncoder;
         this.jwtEncoder = jwtEncoder;
     }
@@ -77,6 +81,24 @@ public class AuthResource {
         Map<String, Object> user = toUserMap(usuario);
 
         return ResponseEntity.ok(Map.of("token", jwt, "user", user));
+    }
+
+    /**
+     * Solicita código de 6 dígitos por e-mail (mesma resposta HTTP mesmo se CPF/e-mail não existirem).
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@Valid @RequestBody CpfOuEmailRequest request) {
+        usuarioPasswordResetService.solicitarReset(request.cpfOuEmail());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Conclui redefinição com CPF ou e-mail + código recebido por e-mail + nova senha.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPasswordWithCode(@Valid @RequestBody ResetPasswordWithCodeRequest request) {
+        usuarioPasswordResetService.concluirReset(request.cpfOuEmail(), request.codigo(), request.novaSenha());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/change-password")
@@ -199,6 +221,10 @@ public class AuthResource {
     }
 
     public record LoginRequest(@NotBlank String cpf, @NotBlank String senha) {}
+
+    public record CpfOuEmailRequest(@NotBlank String cpfOuEmail) {}
+
+    public record ResetPasswordWithCodeRequest(@NotBlank String cpfOuEmail, @NotBlank String codigo, @NotBlank String novaSenha) {}
 
     public record ChangePasswordRequest(@NotBlank String senhaAtual, @NotBlank String novaSenha) {}
 

@@ -29,6 +29,7 @@ import {
   solicitacoesStorageKey,
   type SolicitacaoMock,
 } from '@/lib/mockSolicitacoes';
+import { mensagemErroApi } from '@/lib/apiError';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -183,11 +184,14 @@ const SolicitacoesCadastro: React.FC = () => {
     try {
       if (API_URL) {
         const token = localStorage.getItem('token');
+        if (!token) {
+          throw new Error('Sessão expirada. Faça login novamente.');
+        }
         const res = await fetch(`${API_URL}/api/v1/auth/solicitacoes/${id}/aprovar`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ perfil }),
         });
@@ -198,8 +202,11 @@ const SolicitacoesCadastro: React.FC = () => {
           });
           setSolicitacoes((prev) => prev.filter((s) => s.id !== id));
         } else {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || err.message || 'Erro ao aprovar');
+          const err = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+          if (res.status === 401) {
+            throw new Error('Sessão expirada ou inválida. Faça login novamente.');
+          }
+          throw new Error(mensagemErroApi(err, 'Erro ao aprovar'));
         }
       } else {
         aprovarSolicitacao(id, perfil);
@@ -225,9 +232,12 @@ const SolicitacoesCadastro: React.FC = () => {
     try {
       if (API_URL) {
         const token = localStorage.getItem('token');
+        if (!token) {
+          throw new Error('Sessão expirada. Faça login novamente.');
+        }
         const res = await fetch(`${API_URL}/api/v1/auth/solicitacoes/${id}/rejeitar`, {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
           toast({
@@ -236,7 +246,11 @@ const SolicitacoesCadastro: React.FC = () => {
           });
           setSolicitacoes((prev) => prev.filter((s) => s.id !== id));
         } else {
-          throw new Error('Erro ao rejeitar');
+          const err = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+          if (res.status === 401) {
+            throw new Error('Sessão expirada ou inválida. Faça login novamente.');
+          }
+          throw new Error(mensagemErroApi(err, 'Erro ao rejeitar'));
         }
       } else {
         rejeitarSolicitacao(id);

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
+import { mensagemErroApi } from '@/lib/apiError';
 
 // Sempre usa URL relativa para que o proxy do Vite (vite.config) encaminhe /api ao backend
 const API_BASE = "";
@@ -51,9 +52,11 @@ const Perfil: React.FC = () => {
 
   const storageKey = `school-compass:perfil:${user?.id ?? 'guest'}`;
   const [nome, setNome] = useState(user?.nome ?? '');
-  const [senhaAtual, setSenhaAtual] = useState('');
-  const [novaSenha, setNovaSenha] = useState('');
-  const [confirmarSenha, setConfirmarSenha] = useState('');
+  const [pwdResetSending, setPwdResetSending] = useState(false);
+  const [pwdResetSent, setPwdResetSent] = useState(false);
+  const [codigoReset, setCodigoReset] = useState('');
+  const [novaSenhaReset, setNovaSenhaReset] = useState('');
+  const [confirmarSenhaReset, setConfirmarSenhaReset] = useState('');
   const [email, setEmail] = useState(user?.email ?? '');
   const [telefone, setTelefone] = useState(user?.telefone ?? '');
   const [rua, setRua] = useState(user?.rua ?? '');
@@ -167,9 +170,63 @@ const Perfil: React.FC = () => {
     }
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
+  const cpfOuEmailParaReset = () => {
+    const e = user?.email?.trim();
+    if (e) return e;
+    const c = user?.cpf?.replace(/\D/g, '');
+    return c && c.length === 11 ? c : '';
+  };
+
+  const handleEnviarCodigoSenha = async () => {
+    const dest = cpfOuEmailParaReset();
+    if (!dest) {
+      toast({
+        title: 'E-mail necessário',
+        description: 'Cadastre um e-mail no perfil antes de redefinir a senha por código.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setPwdResetSending(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cpfOuEmail: dest }),
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        toast({
+          title: 'Erro',
+          description: mensagemErroApi(data, 'Não foi possível enviar o código.'),
+          variant: 'destructive',
+        });
+        return;
+      }
+      setPwdResetSent(true);
+      setCodigoReset('');
+      setNovaSenhaReset('');
+      setConfirmarSenhaReset('');
+      toast({
+        title: 'Código enviado',
+        description: 'Verifique o e-mail cadastrado. O código expira em 15 minutos.',
+      });
+    } catch {
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível conectar ao servidor.',
+        variant: 'destructive',
+      });
+    } finally {
+      setPwdResetSending(false);
+    }
+  };
+
+  const handleRedefinirSenhaComCodigo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (novaSenha !== confirmarSenha) {
+    const dest = cpfOuEmailParaReset();
+    if (!dest) return;
+    if (novaSenhaReset !== confirmarSenhaReset) {
       toast({
         title: 'Erro',
         description: 'A nova senha e a confirmação não coincidem.',
@@ -177,7 +234,7 @@ const Perfil: React.FC = () => {
       });
       return;
     }
-    if (novaSenha.length < 6) {
+    if (novaSenhaReset.length < 6) {
       toast({
         title: 'Erro',
         description: 'A nova senha deve ter pelo menos 6 caracteres.',
@@ -185,36 +242,38 @@ const Perfil: React.FC = () => {
       });
       return;
     }
-    if (!token) {
+    const codigoNorm = codigoReset.replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(codigoNorm)) {
       toast({
-        title: 'Erro',
-        description: 'Não foi possível alterar a senha. Tente novamente mais tarde.',
+        title: 'Código inválido',
+        description: 'Informe os 6 dígitos enviados ao seu e-mail.',
         variant: 'destructive',
       });
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/v1/auth/change-password`, {
+      const res = await fetch(`${API_BASE}/api/v1/auth/reset-password`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ senhaAtual, novaSenha }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cpfOuEmail: dest,
+          codigo: codigoNorm,
+          novaSenha: novaSenhaReset,
+        }),
       });
-      const data = (await res.json().catch(() => ({}))) as { detail?: string; message?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        const msg = data?.detail ?? data?.message ?? data?.error ?? 'Senha atual incorreta ou dados inválidos.';
         toast({
-          title: 'Erro ao alterar senha',
-          description: msg,
+          title: 'Não foi possível redefinir',
+          description: mensagemErroApi(data, 'Verifique o código ou solicite um novo.'),
           variant: 'destructive',
         });
         return;
       }
-      setSenhaAtual('');
-      setNovaSenha('');
-      setConfirmarSenha('');
+      setCodigoReset('');
+      setNovaSenhaReset('');
+      setConfirmarSenhaReset('');
+      setPwdResetSent(false);
       toast({
         title: 'Senha alterada',
         description: 'Sua senha foi atualizada com sucesso.',
@@ -404,50 +463,90 @@ const Perfil: React.FC = () => {
               Alterar senha
             </CardTitle>
             <CardDescription>
-              Digite sua senha atual e a nova senha desejada.
+              Enviamos um código de verificação de 6 dígitos para o e-mail da sua conta. O código expira em 15
+              minutos.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <form onSubmit={handleChangePassword} className="space-y-4 max-w-md">
-              <div className="space-y-2">
-                <Label htmlFor="senhaAtual">Senha atual</Label>
-                <Input
-                  id="senhaAtual"
-                  type="password"
-                  value={senhaAtual}
-                  onChange={(e) => setSenhaAtual(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                />
+          <CardContent className="space-y-6 max-w-md">
+            {!pwdResetSent ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Use o botão abaixo para receber o código no e-mail cadastrado ({user?.email || '—'}).
+                </p>
+                <Button
+                  type="button"
+                  variant="gradient"
+                  onClick={() => void handleEnviarCodigoSenha()}
+                  disabled={pwdResetSending || !user?.email}
+                >
+                  Enviar código por e-mail
+                </Button>
+                {!user?.email && (
+                  <p className="text-sm text-amber-700 dark:text-amber-500">
+                    Cadastre um e-mail em &quot;Informações pessoais&quot; para usar esta opção.
+                  </p>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="novaSenha">Nova senha</Label>
-                <Input
-                  id="novaSenha"
-                  type="password"
-                  value={novaSenha}
-                  onChange={(e) => setNovaSenha(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                  required
-                  minLength={6}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirmarSenha">Confirmar nova senha</Label>
-                <Input
-                  id="confirmarSenha"
-                  type="password"
-                  value={confirmarSenha}
-                  onChange={(e) => setConfirmarSenha(e.target.value)}
-                  placeholder="Repita a nova senha"
-                  required
-                  minLength={6}
-                />
-              </div>
-              <Button type="submit" variant="gradient">
-                Alterar senha
-              </Button>
-            </form>
+            ) : (
+              <form onSubmit={handleRedefinirSenhaComCodigo} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="codigoReset">Código de verificação</Label>
+                  <Input
+                    id="codigoReset"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="000000"
+                    maxLength={8}
+                    value={codigoReset}
+                    onChange={(ev) => setCodigoReset(ev.target.value.replace(/\D/g, '').slice(0, 6))}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="novaSenhaReset">Nova senha</Label>
+                  <Input
+                    id="novaSenhaReset"
+                    type="password"
+                    autoComplete="new-password"
+                    value={novaSenhaReset}
+                    onChange={(ev) => setNovaSenhaReset(ev.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    required
+                    minLength={6}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmarSenhaReset">Confirmar nova senha</Label>
+                  <Input
+                    id="confirmarSenhaReset"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmarSenhaReset}
+                    onChange={(ev) => setConfirmarSenhaReset(ev.target.value)}
+                    placeholder="Repita a nova senha"
+                    required
+                    minLength={6}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPwdResetSent(false);
+                      setCodigoReset('');
+                      setNovaSenhaReset('');
+                      setConfirmarSenhaReset('');
+                    }}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" variant="gradient">
+                    Definir nova senha
+                  </Button>
+                </div>
+              </form>
+            )}
           </CardContent>
         </Card>
       </div>

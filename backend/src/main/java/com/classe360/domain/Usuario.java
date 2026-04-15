@@ -54,6 +54,12 @@ public class Usuario {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
+    @Column(name = "password_reset_code")
+    private String passwordResetCode;
+
+    @Column(name = "password_reset_expires_at")
+    private LocalDateTime passwordResetExpiresAt;
+
     public enum Role {
         ROLE_GESTOR,
         ROLE_ADMIN,
