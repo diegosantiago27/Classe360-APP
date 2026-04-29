@@ -9,11 +9,15 @@ import com.classe360.repository.UsuarioRepository;
 import com.classe360.service.UsuarioPasswordResetService;
 import com.classe360.service.UsuarioService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -85,6 +89,31 @@ public class AuthResource {
 
     /**
      * Solicita código de 6 dígitos por e-mail (mesma resposta HTTP mesmo se CPF/e-mail não existirem).
+     */
+    @PostMapping("/recuperar-senha")
+    public ResponseEntity<Map<String, String>> recuperarSenha(
+        @Valid @RequestBody PasswordRecoveryRequest request,
+        HttpServletRequest httpServletRequest
+    ) {
+        String origem = httpServletRequest != null ? httpServletRequest.getRemoteAddr() : "unknown";
+        usuarioPasswordResetService.solicitarResetPorEmail(request.email(), origem);
+        return ResponseEntity.ok(Map.of("message", "Se o email estiver cadastrado, enviaremos um código"));
+    }
+
+    @PostMapping("/verificar-codigo")
+    public ResponseEntity<Map<String, Object>> verificarCodigo(@Valid @RequestBody VerifyCodeRequest request) {
+        usuarioPasswordResetService.validarCodigoPorEmail(request.email(), request.codigo());
+        return ResponseEntity.ok(Map.of("valido", true));
+    }
+
+    @PostMapping("/resetar-senha")
+    public ResponseEntity<Map<String, String>> resetarSenha(@Valid @RequestBody ResetPasswordRequest request) {
+        usuarioPasswordResetService.resetarSenhaPorEmail(request.email(), request.codigo(), request.novaSenha());
+        return ResponseEntity.ok(Map.of("message", "Senha redefinida com sucesso"));
+    }
+
+    /**
+     * Endpoint legado.
      */
     @PostMapping("/forgot-password")
     public ResponseEntity<Void> forgotPassword(@Valid @RequestBody CpfOuEmailRequest request) {
@@ -225,6 +254,16 @@ public class AuthResource {
     public record CpfOuEmailRequest(@NotBlank String cpfOuEmail) {}
 
     public record ResetPasswordWithCodeRequest(@NotBlank String cpfOuEmail, @NotBlank String codigo, @NotBlank String novaSenha) {}
+
+    public record PasswordRecoveryRequest(@NotBlank @Email String email) {}
+
+    public record VerifyCodeRequest(@NotBlank @Email String email, @NotBlank @Pattern(regexp = "\\d{6}") String codigo) {}
+
+    public record ResetPasswordRequest(
+        @NotBlank @Email String email,
+        @NotBlank @Pattern(regexp = "\\d{6}") String codigo,
+        @NotBlank @Size(min = 8, max = 100) String novaSenha
+    ) {}
 
     public record ChangePasswordRequest(@NotBlank String senhaAtual, @NotBlank String novaSenha) {}
 

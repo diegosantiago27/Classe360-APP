@@ -277,6 +277,7 @@ type NotaIn = {
 type FreqIn = {
   alunoId?: number | null;
   turmaId?: number | null;
+  disciplinaId?: number | null;
   presente?: boolean | null;
 };
 
@@ -289,12 +290,16 @@ export function montarPayloadConsolidadoTurma(options: {
   disciplinasMap: Map<number, string>;
   vinculos: Array<{ turmaId?: number | null; professorNome?: string | null }>;
   bimestreFiltro: string;
+  disciplinaFiltro: string;
   periodosMap: Map<number, string>;
   escolaNome: string;
 }): PayloadConsolidadoTurma | null {
   let notasT = options.notas.filter((n) => n.turmaId === options.turmaId);
   if (options.bimestreFiltro !== 'todos') {
     notasT = notasT.filter((n) => String(n.periodoId ?? '') === options.bimestreFiltro);
+  }
+  if (options.disciplinaFiltro !== 'todas') {
+    notasT = notasT.filter((n) => String(n.disciplinaId ?? '') === options.disciplinaFiltro);
   }
 
   if (notasT.length === 0) return null;
@@ -320,6 +325,9 @@ export function montarPayloadConsolidadoTurma(options: {
       : 0;
 
   let freqsT = options.frequencias.filter((f) => f.turmaId === options.turmaId);
+  if (options.disciplinaFiltro !== 'todas') {
+    freqsT = freqsT.filter((f) => String(f.disciplinaId ?? '') === options.disciplinaFiltro);
+  }
   const totalF = freqsT.length;
   const pres = freqsT.filter((f) => f.presente === true).length;
   const freqMediaPct = totalF > 0 ? Math.round((pres / totalF) * 1000) / 10 : 0;

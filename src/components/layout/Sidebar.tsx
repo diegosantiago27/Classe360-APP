@@ -143,7 +143,7 @@ const navItems: NavItem[] = [
     icon: FileText,
     label: 'Relatórios',
     path: '/relatorios',
-    profiles: [UserProfile.PROFESSOR],
+    profiles: [UserProfile.GESTOR, UserProfile.ADMINISTRADOR, UserProfile.PROFESSOR],
   },
   {
     icon: Bell,

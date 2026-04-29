@@ -9,6 +9,8 @@ import { useToast } from '@/hooks/use-toast';
 import { BarChart3, FileDown, TrendingUp, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getInstituicaoApi, type UsuarioApi, type DisciplinaTurmaApi } from '@/lib/entityCrudApi';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserProfile } from '@/types/auth';
 import { gerarRelatorioDesempenhoPdf } from '@/lib/relatorioDesempenhoPdf';
 import {
   gerarRelatorioDesempenhoIndividualPdf,
@@ -102,6 +104,7 @@ async function fetchAllPages<T>(path: string): Promise<T[]> {
 const toPercent = (value: number) => Math.round(value * 10) / 10;
 
 const Relatorios: React.FC = () => {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -113,6 +116,7 @@ const Relatorios: React.FC = () => {
   const [usuarios, setUsuarios] = useState<UsuarioApi[]>([]);
   const [vinculos, setVinculos] = useState<DisciplinaTurmaApi[]>([]);
   const [turma, setTurma] = useState<string>('todas');
+  const [disciplina, setDisciplina] = useState<string>('todas');
   const [bimestre, setBimestre] = useState<string>('todos');
   const [alunoSelecionado, setAlunoSelecionado] = useState<string>('nenhum');
 
@@ -194,6 +198,28 @@ const Relatorios: React.FC = () => {
     return map;
   }, [periodos]);
 
+  const periodosOrdenados = useMemo(() => {
+    const extrairOrdemPeriodo = (p: PeriodoApi): number => {
+      const nome = (p.nome ?? '').trim();
+      const matchNumero = nome.match(/^(\d+)/);
+      if (matchNumero) {
+        return Number(matchNumero[1]);
+      }
+      return Number(p.id);
+    };
+
+    return [...periodos].sort((a, b) => {
+      const ordemA = extrairOrdemPeriodo(a);
+      const ordemB = extrairOrdemPeriodo(b);
+      if (ordemA !== ordemB) {
+        return ordemA - ordemB;
+      }
+      const nomeA = (a.nome ?? '').trim();
+      const nomeB = (b.nome ?? '').trim();
+      return nomeA.localeCompare(nomeB, 'pt-BR');
+    });
+  }, [periodos]);
+
   const disciplinasMap = useMemo(() => {
     const map = new Map<number, string>();
     disciplinas.forEach((d) => {
@@ -210,27 +236,126 @@ const Relatorios: React.FC = () => {
     return map;
   }, [turmas]);
 
+  const ehProfessor = user?.perfil === UserProfile.PROFESSOR;
+
+  const vinculosProfessor = useMemo(() => {
+    if (!ehProfessor || !user?.id) {
+      return [];
+    }
+    const professorId = String(user.id);
+    return vinculos.filter((v) => String(v.professorId ?? '') === professorId);
+  }, [ehProfessor, user?.id, vinculos]);
+
+  const paresProfessor = useMemo(() => {
+    const set = new Set<string>();
+    vinculosProfessor.forEach((v) => {
+      if (v.turmaId != null && v.disciplinaId != null) {
+        set.add(`${v.turmaId}|${v.disciplinaId}`);
+      }
+    });
+    return set;
+  }, [vinculosProfessor]);
+
+  const turmasVisiveis = useMemo(() => {
+    if (!ehProfessor) {
+      return turmas;
+    }
+    const ids = new Set(vinculosProfessor.map((v) => Number(v.turmaId)).filter((id) => Number.isFinite(id)));
+    return turmas.filter((t) => ids.has(t.id));
+  }, [ehProfessor, turmas, vinculosProfessor]);
+
   const alunosFiltrados = useMemo(() => {
+    const alunoIdsProfessor = new Set<number>();
+    if (ehProfessor) {
+      notas.forEach((n) => {
+        if (n.alunoId == null || n.turmaId == null || n.disciplinaId == null) return;
+        if (paresProfessor.has(`${n.turmaId}|${n.disciplinaId}`)) {
+          alunoIdsProfessor.add(n.alunoId);
+        }
+      });
+    }
+
     return usuarios
       .filter((u) => String(u.role ?? '').toUpperCase().includes('ALUNO'))
       .filter((u) => u.ativo !== false)
+      .filter((u) => {
+        if (!ehProfessor) return true;
+        if (!Number.isFinite(Number(u.id))) return false;
+        return alunoIdsProfessor.has(Number(u.id));
+      })
       .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR'));
-  }, [usuarios]);
+  }, [ehProfessor, notas, paresProfessor, usuarios]);
+
+  const disciplinasFiltradas = useMemo(() => {
+    const disciplinasBase = ehProfessor
+      ? disciplinas.filter((d) =>
+          vinculosProfessor.some((v) => Number(v.disciplinaId) === d.id && Number.isFinite(Number(v.disciplinaId))),
+        )
+      : disciplinas;
+
+    if (turma === 'todas') {
+      return disciplinasBase;
+    }
+    const turmaId = Number(turma);
+    if (!Number.isFinite(turmaId)) {
+      return disciplinasBase;
+    }
+    const vinculosBase = ehProfessor ? vinculosProfessor : vinculos;
+    const ids = new Set(
+      vinculosBase
+        .filter((v) => Number(v.turmaId) === turmaId && Number.isFinite(Number(v.disciplinaId)))
+        .map((v) => Number(v.disciplinaId)),
+    );
+    if (ids.size === 0) {
+      return disciplinasBase;
+    }
+    return disciplinasBase.filter((d) => ids.has(d.id));
+  }, [disciplinas, ehProfessor, turma, vinculos, vinculosProfessor]);
+
+  useEffect(() => {
+    if (turma === 'todas') {
+      return;
+    }
+    const selectedExists = turmasVisiveis.some((item) => String(item.id) === turma);
+    if (!selectedExists) {
+      setTurma('todas');
+    }
+  }, [turma, turmasVisiveis]);
+
+  useEffect(() => {
+    if (disciplina === 'todas') {
+      return;
+    }
+    const selectedExists = disciplinasFiltradas.some((item) => String(item.id) === disciplina);
+    if (!selectedExists) {
+      setDisciplina('todas');
+    }
+  }, [disciplina, disciplinasFiltradas]);
 
   const notasFiltradas = useMemo(() => {
     return notas.filter((n) => {
+      if (ehProfessor) {
+        if (n.turmaId == null || n.disciplinaId == null) return false;
+        if (!paresProfessor.has(`${n.turmaId}|${n.disciplinaId}`)) return false;
+      }
       if (turma !== 'todas' && String(n.turmaId ?? '') !== turma) return false;
       if (bimestre !== 'todos' && String(n.periodoId ?? '') !== bimestre) return false;
+      if (disciplina !== 'todas' && String(n.disciplinaId ?? '') !== disciplina) return false;
       return true;
     });
-  }, [notas, turma, bimestre]);
+  }, [bimestre, disciplina, ehProfessor, notas, paresProfessor, turma]);
 
   const frequenciasFiltradas = useMemo(() => {
     return frequencias.filter((f) => {
+      if (ehProfessor) {
+        if (f.turmaId == null || f.disciplinaId == null) return false;
+        if (!paresProfessor.has(`${f.turmaId}|${f.disciplinaId}`)) return false;
+      }
       if (turma !== 'todas' && String(f.turmaId ?? '') !== turma) return false;
+      if (disciplina !== 'todas' && String(f.disciplinaId ?? '') !== disciplina) return false;
       return true;
     });
-  }, [frequencias, turma]);
+  }, [disciplina, ehProfessor, frequencias, paresProfessor, turma]);
 
   const distribuicaoNotas = useMemo(() => {
     const faixas = [
@@ -503,6 +628,7 @@ const Relatorios: React.FC = () => {
         vinculos,
         turmaFiltro: turma,
         bimestreFiltro: bimestre,
+        disciplinaFiltro: disciplina,
         periodosMap,
         escolaNome: escola,
       });
@@ -569,6 +695,7 @@ const Relatorios: React.FC = () => {
         disciplinasMap,
         vinculos,
         bimestreFiltro: bimestre,
+        disciplinaFiltro: disciplina,
         periodosMap,
         escolaNome: escola,
       });
@@ -609,7 +736,7 @@ const Relatorios: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="todas">Todas as turmas</SelectItem>
-              {turmas.map((item) => (
+              {turmasVisiveis.map((item) => (
                 <SelectItem key={item.id} value={String(item.id)}>
                   {item.nome?.trim() || `Turma ${item.id}`}
                 </SelectItem>
@@ -623,9 +750,23 @@ const Relatorios: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="todos">Todos os períodos</SelectItem>
-              {periodos.map((item) => (
+              {periodosOrdenados.map((item) => (
                 <SelectItem key={item.id} value={String(item.id)}>
                   {periodosMap.get(item.id) ?? `Período ${item.id}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={disciplina} onValueChange={setDisciplina}>
+            <SelectTrigger className="w-full md:w-[240px]">
+              <SelectValue placeholder="Todas as disciplinas" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todas">Todas as disciplinas</SelectItem>
+              {disciplinasFiltradas.map((item) => (
+                <SelectItem key={item.id} value={String(item.id)}>
+                  {disciplinasMap.get(item.id) ?? `Disciplina ${item.id}`}
                 </SelectItem>
               ))}
             </SelectContent>

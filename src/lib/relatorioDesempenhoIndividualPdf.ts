@@ -277,6 +277,7 @@ export type NotaAggInput = {
 export type FrequenciaAggInput = {
   alunoId?: number | null;
   turmaId?: number | null;
+  disciplinaId?: number | null;
   data?: string | null;
   presente?: boolean | null;
 };
@@ -297,6 +298,7 @@ export function montarPayloadRelatorioIndividual(options: {
   vinculos: VinculoProfInput[];
   turmaFiltro: string;
   bimestreFiltro: string;
+  disciplinaFiltro: string;
   periodosMap: Map<number, string>;
   escolaNome: string;
 }): GerarRelatorioIndividualParams | null {
@@ -306,6 +308,9 @@ export function montarPayloadRelatorioIndividual(options: {
   }
   if (options.bimestreFiltro !== 'todos') {
     notasAluno = notasAluno.filter((n) => String(n.periodoId ?? '') === options.bimestreFiltro);
+  }
+  if (options.disciplinaFiltro !== 'todas') {
+    notasAluno = notasAluno.filter((n) => String(n.disciplinaId ?? '') === options.disciplinaFiltro);
   }
 
   if (notasAluno.length === 0) return null;
@@ -383,6 +388,9 @@ export function montarPayloadRelatorioIndividual(options: {
   let freqAluno = options.frequencias.filter((f) => f.alunoId === options.alunoId);
   if (options.turmaFiltro !== 'todas') {
     freqAluno = freqAluno.filter((f) => String(f.turmaId ?? '') === options.turmaFiltro);
+  }
+  if (options.disciplinaFiltro !== 'todas') {
+    freqAluno = freqAluno.filter((f) => String(f.disciplinaId ?? '') === options.disciplinaFiltro);
   }
   const totalF = freqAluno.length;
   const pres = freqAluno.filter((f) => f.presente === true).length;

@@ -342,7 +342,7 @@ const ProfessorDashboard: React.FC = () => {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <Link to="/notas" className="block">
             <div className="bg-card rounded-xl p-4 border border-border/50 card-hover text-center">
               <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
@@ -381,6 +381,14 @@ const ProfessorDashboard: React.FC = () => {
                 <BookOpen className="w-6 h-6 text-success" />
               </div>
               <p className="font-medium text-sm">Materiais</p>
+            </div>
+          </Link>
+          <Link to="/relatorios" className="block">
+            <div className="bg-card rounded-xl p-4 border border-border/50 card-hover text-center">
+              <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-3">
+                <FileText className="w-6 h-6 text-accent" />
+              </div>
+              <p className="font-medium text-sm">Relatórios</p>
             </div>
           </Link>
         </div>

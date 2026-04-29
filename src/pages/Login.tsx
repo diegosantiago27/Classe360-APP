@@ -137,7 +137,7 @@ const Login: React.FC = () => {
                 to="/recuperar-senha"
                 className="text-primary hover:underline font-medium"
               >
-                Esqueceu a senha?
+                Recuperar senha
               </Link>
             </div>
 

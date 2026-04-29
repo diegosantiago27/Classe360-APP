@@ -314,7 +314,13 @@ const App = () => (
             <Route
               path="/relatorios"
               element={
-                <ProtectedRoute allowedProfiles={[UserProfile.PROFESSOR]}>
+                <ProtectedRoute
+                  allowedProfiles={[
+                    UserProfile.GESTOR,
+                    UserProfile.ADMINISTRADOR,
+                    UserProfile.PROFESSOR,
+                  ]}
+                >
                   <Relatorios />
                 </ProtectedRoute>
               }

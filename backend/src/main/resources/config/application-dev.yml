@@ -108,7 +108,7 @@ jhipster:
   mail: # specific JHipster mail property, for standard properties see MailProperties
     base-url: http://127.0.0.1:8080
     # Remetente visível no cliente de e-mail — com Gmail/Outlook use o mesmo e-mail da conta SMTP (ou MAIL_FROM).
-    from: ${MAIL_FROM:${MAIL_USERNAME:classe360@localhost}}
+    from: diegofsantiago27@hotmail.com
   logging:
     use-json-format: false # By default, logs are not in Json format
     logstash: # Forward logs to logstash over a socket, used by LoggingConfiguration

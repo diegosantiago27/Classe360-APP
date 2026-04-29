@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { KeyRound, Loader2, Mail } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Eye, EyeOff, KeyRound, Loader2, Mail } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,13 +14,19 @@ const API_BASE =
     : '';
 
 const PasswordRecovery: React.FC = () => {
-  const [identifier, setIdentifier] = useState('');
-  const [step, setStep] = useState<1 | 2>(1);
+  const [email, setEmail] = useState('');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [codigo, setCodigo] = useState('');
   const [novaSenha, setNovaSenha] = useState('');
   const [confirmarSenha, setConfirmarSenha] = useState('');
+  const [mostrarNovaSenha, setMostrarNovaSenha] = useState(false);
+  const [mostrarConfirmacaoSenha, setMostrarConfirmacaoSenha] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const navigate = useNavigate();
+
+  const senhasConferem = novaSenha.length > 0 && confirmarSenha.length > 0 && novaSenha === confirmarSenha;
+  const senhasDiferentes = confirmarSenha.length > 0 && novaSenha !== confirmarSenha;
 
   const postJson = async (path: string, body: object) => {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -36,14 +42,13 @@ const PasswordRecovery: React.FC = () => {
 
   const handleEnviarCodigo = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!identifier.trim()) return;
+    if (!email.trim()) return;
     setLoading(true);
     try {
-      await postJson('/api/v1/auth/forgot-password', { cpfOuEmail: identifier.trim() });
+      await postJson('/api/v1/auth/recuperar-senha', { email: email.trim() });
       toast({
-        title: 'Verifique seu e-mail',
-        description:
-          'Se encontrarmos uma conta com esses dados, enviamos um código de 6 dígitos. Ele expira em 15 minutos.',
+        title: 'Código solicitado',
+        description: 'Se o email estiver cadastrado, enviaremos um código',
       });
       setStep(2);
     } catch (e) {
@@ -57,20 +62,53 @@ const PasswordRecovery: React.FC = () => {
     }
   };
 
-  const handleRedefinir = async (event: React.FormEvent) => {
+  const handleValidarCodigo = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (novaSenha !== confirmarSenha) {
+    const codigoNorm = codigo.replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(codigoNorm)) {
       toast({
-        title: 'Erro',
-        description: 'A nova senha e a confirmação não coincidem.',
+        title: 'Código inválido',
+        description: 'Informe os 6 dígitos enviados ao seu email.',
         variant: 'destructive',
       });
       return;
     }
-    if (novaSenha.length < 6) {
+    setLoading(true);
+    try {
+      await postJson('/api/v1/auth/verificar-codigo', { email: email.trim(), codigo: codigoNorm });
+      toast({
+        title: 'Código validado',
+        description: 'Agora você pode cadastrar sua nova senha.',
+      });
+      setStep(3);
+    } catch (e) {
+      toast({
+        title: 'Não foi possível validar',
+        description: e instanceof Error ? e.message : 'Código inválido ou expirado',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRedefinir = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (step !== 3) {
+      return;
+    }
+    if (novaSenha !== confirmarSenha) {
       toast({
         title: 'Erro',
-        description: 'A senha deve ter pelo menos 6 caracteres.',
+        description: 'As senhas não coincidem',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (novaSenha.length < 8) {
+      toast({
+        title: 'Erro',
+        description: 'A senha deve conter no mínimo 8 caracteres',
         variant: 'destructive',
       });
       return;
@@ -86,8 +124,8 @@ const PasswordRecovery: React.FC = () => {
     }
     setLoading(true);
     try {
-      await postJson('/api/v1/auth/reset-password', {
-        cpfOuEmail: identifier.trim(),
+      await postJson('/api/v1/auth/resetar-senha', {
+        email: email.trim(),
         codigo: codigoNorm,
         novaSenha,
       });
@@ -95,11 +133,7 @@ const PasswordRecovery: React.FC = () => {
         title: 'Senha alterada',
         description: 'Você já pode entrar com a nova senha.',
       });
-      setIdentifier('');
-      setCodigo('');
-      setNovaSenha('');
-      setConfirmarSenha('');
-      setStep(1);
+      navigate('/login');
     } catch (e) {
       toast({
         title: 'Não foi possível redefinir',
@@ -128,47 +162,49 @@ const PasswordRecovery: React.FC = () => {
         {step === 1 ? (
           <Card className="animate-fade-in">
             <CardHeader>
-              <CardTitle>Redefinir senha</CardTitle>
+              <CardTitle>Recuperar senha</CardTitle>
               <CardDescription>
-                Informe seu CPF ou e-mail cadastrado. Enviaremos um código de verificação para o e-mail da conta.
+                Informe seu email cadastrado para receber o código de verificação.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleEnviarCodigo} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="identifier">CPF ou e-mail</Label>
+                  <Label htmlFor="email">Email</Label>
                   <div className="relative">
                     <Input
-                      id="identifier"
+                      id="email"
+                      type="email"
                       autoComplete="username"
-                      placeholder="000.000.000-00 ou email@dominio.com"
-                      value={identifier}
-                      onChange={(event) => setIdentifier(event.target.value)}
+                      placeholder="email@dominio.com"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
                       required
                     />
                     <Mail className="w-4 h-4 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2" />
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground">Se o email estiver cadastrado, enviaremos um código</p>
                 <Button type="submit" variant="gradient" className="w-full" disabled={loading}>
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  Enviar código por e-mail
+                  Enviar código
                 </Button>
               </form>
             </CardContent>
           </Card>
-        ) : (
+        ) : null}
+
+        {step === 2 ? (
           <Card className="animate-fade-in">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <KeyRound className="w-5 h-5" />
-                Informe o código e a nova senha
+                Validar código
               </CardTitle>
-              <CardDescription>
-                Digite o código de 6 dígitos recebido no e-mail cadastrado e defina uma nova senha.
-              </CardDescription>
+              <CardDescription>Digite o código de 6 dígitos recebido no seu email.</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleRedefinir} className="space-y-4">
+              <form onSubmit={handleValidarCodigo} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="codigo">Código de verificação</Label>
                   <Input
@@ -182,32 +218,6 @@ const PasswordRecovery: React.FC = () => {
                     required
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="novaSenha">Nova senha</Label>
-                  <Input
-                    id="novaSenha"
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder="Mínimo 6 caracteres"
-                    value={novaSenha}
-                    onChange={(e) => setNovaSenha(e.target.value)}
-                    minLength={6}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirmarSenha">Confirmar nova senha</Label>
-                  <Input
-                    id="confirmarSenha"
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder="Repita a nova senha"
-                    value={confirmarSenha}
-                    onChange={(e) => setConfirmarSenha(e.target.value)}
-                    minLength={6}
-                    required
-                  />
-                </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
                     type="button"
@@ -217,13 +227,98 @@ const PasswordRecovery: React.FC = () => {
                     onClick={() => {
                       setStep(1);
                       setCodigo('');
+                    }}
+                  >
+                    Voltar
+                  </Button>
+                  <Button type="submit" variant="gradient" className="flex-1" disabled={loading}>
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Validar código
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {step === 3 ? (
+          <Card className="animate-fade-in">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5" />
+                Redefinir senha
+              </CardTitle>
+              <CardDescription>Defina sua nova senha para concluir a recuperação.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleRedefinir} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="novaSenha">Nova senha</Label>
+                  <div className="relative">
+                    <Input
+                      id="novaSenha"
+                      type={mostrarNovaSenha ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      placeholder="Mínimo 8 caracteres"
+                      value={novaSenha}
+                      onChange={(e) => setNovaSenha(e.target.value)}
+                      minLength={8}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setMostrarNovaSenha((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={mostrarNovaSenha ? 'Ocultar nova senha' : 'Mostrar nova senha'}
+                    >
+                      {mostrarNovaSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmarSenha">Confirmar nova senha</Label>
+                  <div className="relative">
+                    <Input
+                      id="confirmarSenha"
+                      type={mostrarConfirmacaoSenha ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      placeholder="Repita a nova senha"
+                      value={confirmarSenha}
+                      onChange={(e) => setConfirmarSenha(e.target.value)}
+                      minLength={8}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setMostrarConfirmacaoSenha((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={mostrarConfirmacaoSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}
+                    >
+                      {mostrarConfirmacaoSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {senhasConferem ? (
+                    <p className="text-xs text-green-600">As senhas conferem.</p>
+                  ) : null}
+                  {senhasDiferentes ? (
+                    <p className="text-xs text-red-600">As senhas não coincidem.</p>
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    disabled={loading}
+                    onClick={() => {
+                      setStep(2);
                       setNovaSenha('');
                       setConfirmarSenha('');
                     }}
                   >
                     Voltar
                   </Button>
-                  <Button type="submit" variant="gradient" className="flex-1" disabled={loading}>
+                  <Button type="submit" variant="gradient" className="flex-1" disabled={loading || senhasDiferentes}>
                     {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                     Redefinir senha
                   </Button>
@@ -231,7 +326,7 @@ const PasswordRecovery: React.FC = () => {
               </form>
             </CardContent>
           </Card>
-        )}
+        ) : null}
 
         <div className="text-center text-sm text-muted-foreground">
           <p>

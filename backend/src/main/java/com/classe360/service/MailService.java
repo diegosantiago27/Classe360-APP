@@ -140,4 +140,29 @@ public class MailService {
         String subject = messageSource.getMessage("email.classe360.reset.title", null, locale);
         sendEmailSync(email, subject, content, false, true);
     }
+
+    public void sendUsuarioPasswordResetCodeEmailOrThrow(String email, String nome, String codigo) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("E-mail ausente para envio de código de reset");
+        }
+        Locale locale = Locale.forLanguageTag("pt-BR");
+        Context context = new Context(locale);
+        context.setVariable("nome", nome != null ? nome : "");
+        context.setVariable("codigo", codigo);
+        context.setVariable(BASE_URL, jHipsterProperties.getMail().getBaseUrl());
+        String content = templateEngine.process("mail/passwordResetUsuarioEmail", context);
+        String subject = messageSource.getMessage("email.classe360.reset.title", null, locale);
+        MimeMessage mimeMessage = javaMailSender.createMimeMessage();
+        try {
+            MimeMessageHelper message = new MimeMessageHelper(mimeMessage, false, StandardCharsets.UTF_8.name());
+            message.setTo(email);
+            message.setFrom(jHipsterProperties.getMail().getFrom());
+            message.setSubject(subject);
+            message.setText(content, true);
+            javaMailSender.send(mimeMessage);
+        } catch (MailException | MessagingException e) {
+            LOG.error("Falha ao enviar código de redefinição para '{}'", email, e);
+            throw new IllegalStateException("Erro ao enviar email. Tente novamente mais tarde", e);
+        }
+    }
 }
