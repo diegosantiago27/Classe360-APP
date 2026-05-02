@@ -186,27 +186,29 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-sidebar-border">
+      <div className="flex items-center justify-between px-2 py-4 border-b border-sidebar-border">
         {!collapsed && (
-          <div className="flex items-center gap-3">
-            <img
-              src="/360-08.png"
-              alt="Classe 360"
-              className="h-9 w-auto object-contain"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
-              }}
-            />
+          <div className="flex items-center w-full">
+            <div className="h-9 w-full overflow-hidden">
+              <img
+                src="/branco.png"
+                alt="Classe 360"
+                className="h-full w-full object-contain object-center scale-[0.96] -translate-y-[6%]"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/branco.png';
+                }}
+              />
+            </div>
           </div>
         )}
         {collapsed && (
           <div className="w-10 h-10 rounded-xl bg-sidebar-accent flex items-center justify-center mx-auto">
             <img
-              src="/360-08.png"
+              src="/branco.png"
               alt="Classe 360"
-              className="h-6 w-auto object-contain"
+              className="h-6 w-6 object-cover"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+                (e.currentTarget as HTMLImageElement).src = '/branco.png';
               }}
             />
           </div>

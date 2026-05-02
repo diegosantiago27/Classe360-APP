@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 
 interface Turma {
+  id?: string;
+  nome?: string;
   alunos: number;
 }
 
@@ -42,6 +44,9 @@ interface FrequenciaRegistro {
 
 interface Prova {
   id?: string;
+  turma?: string;
+  turmaId?: string;
+  publicada?: boolean;
   data: string;
   horario: string;
   titulo: string;
@@ -61,6 +66,28 @@ interface NotaAluno {
 interface FrequenciaAluno {
   presenca: number;
 }
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const getTurmaKey = (value?: string) => {
+  const normalized = normalizeText(value).replace(/º/g, 'o').replace(/\s+/g, ' ');
+  const match = normalized.match(/(\d+)\s*(?:o|ano)?\s*([a-z])/i);
+  if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  return normalized.replace(/[^a-z0-9]/g, '');
+};
+
+const parseOnlyDate = (value?: string) => {
+  if (!value?.trim()) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
+};
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
@@ -115,6 +142,8 @@ const Dashboard: React.FC = () => {
         });
 
         const turmasMapped: Turma[] = turmasApi.map((t) => ({
+          id: String(t.id ?? ''),
+          nome: t.nome ?? '',
           alunos: Array.isArray(t.alunosIds) ? t.alunosIds.length : 0,
         }));
 
@@ -128,6 +157,9 @@ const Dashboard: React.FC = () => {
 
         const provasMapped: Prova[] = provasApi.map((p) => ({
           id: String(p.id ?? ''),
+          turma: turmasMapped.find((t) => t.id === String(p.turmaId ?? ''))?.nome ?? '',
+          turmaId: p.turmaId != null ? String(p.turmaId) : '',
+          publicada: Boolean(p.publicada),
           data: p.data ?? '',
           horario: p.horario ?? '',
           titulo: p.titulo ?? '',
@@ -256,23 +288,56 @@ const Dashboard: React.FC = () => {
   );
   const materiasAluno = useMemo(() => minhasNotas.length, [minhasNotas]);
 
+  const provasVisiveisAluno = useMemo(() => {
+    if (user?.perfil !== UserProfile.ALUNO) return provasFonte;
+    const turmaKeys = new Set<string>();
+    if (user?.turmaId?.trim()) {
+      turmaKeys.add(getTurmaKey(user.turmaId));
+      const turmaEncontrada = turmasFonte.find((t) => t.id === user.turmaId);
+      if (turmaEncontrada?.nome) turmaKeys.add(getTurmaKey(turmaEncontrada.nome));
+    }
+    if ('turma' in (user ?? {}) && typeof (user as { turma?: string }).turma === 'string') {
+      turmaKeys.add(getTurmaKey((user as { turma?: string }).turma));
+    }
+    turmaKeys.delete('');
+    if (turmaKeys.size === 0) return [];
+    return provasFonte.filter((item) => {
+      if (item.publicada === false) return false;
+      const itemTurmaKeys = [getTurmaKey(item.turmaId), getTurmaKey(item.turma)];
+      return itemTurmaKeys.some((key) => key && turmaKeys.has(key));
+    });
+  }, [provasFonte, turmasFonte, user]);
+
+  const provasAgendadasFuturas = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const base = user?.perfil === UserProfile.ALUNO ? provasVisiveisAluno : provasFonte;
+    return base
+      .filter((item) => item.status === 'Agendada')
+      .filter((item) => {
+        const date = parseOnlyDate(item.data);
+        if (!date) return false;
+        return date.getTime() >= today.getTime();
+      });
+  }, [provasFonte, provasVisiveisAluno, user?.perfil]);
+
   const avisosRecentes = useMemo(() => {
     return avisosFonte.slice(0, 3);
   }, [avisosFonte]);
 
   const proximosEventos = useMemo(() => {
-    const parsed = provasFonte
-      .filter((item) => item.status === 'Agendada')
+    const parsed = provasAgendadasFuturas
       .map((item) => {
-        const date = new Date(item.data);
+        const date = parseOnlyDate(item.data) ?? new Date('invalid');
         return {
           ...item,
           date,
         };
       })
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .filter((item) => !Number.isNaN(item.date.getTime()));
     return parsed.slice(0, 3);
-  }, [provasFonte]);
+  }, [provasAgendadasFuturas]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -473,39 +538,6 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {user?.perfil === UserProfile.PROFESSOR && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard
-              icon={BookOpen}
-              title="Minhas Turmas"
-              value={turmasFonte.length}
-              variant="primary"
-              delay={0}
-            />
-            <StatCard
-              icon={Users}
-              title="Total de Alunos"
-              value={totalAlunos}
-              variant="accent"
-              delay={100}
-            />
-            <StatCard
-              icon={ClipboardList}
-              title="Notas Pendentes"
-              value={notasPendentes}
-              variant="warning"
-              delay={200}
-            />
-            <StatCard
-              icon={TrendingUp}
-              title="Média das Turmas"
-              value={mediaNotas || 0}
-              variant="success"
-              delay={300}
-            />
-          </div>
-        )}
-
         {user?.perfil === UserProfile.ALUNO && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
@@ -532,7 +564,7 @@ const Dashboard: React.FC = () => {
             <StatCard
               icon={FileText}
               title="Provas Próximas"
-              value={provasAgendadas}
+              value={user?.perfil === UserProfile.ALUNO ? provasAgendadasFuturas.length : provasAgendadas}
               variant="warning"
               delay={300}
             />

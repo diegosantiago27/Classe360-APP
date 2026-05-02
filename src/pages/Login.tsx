@@ -69,11 +69,11 @@ const Login: React.FC = () => {
         <div className="w-full max-w-md animate-fade-in">
           <div className="flex items-center gap-4 mb-8">
             <img
-              src="/360-08.png"
+              src="/classe360_logo.png"
               alt="Classe 360"
-              className="h-24 sm:h-28 w-auto max-w-full object-contain"
+              className="w-[210px] sm:w-[250px] h-auto max-w-full object-contain"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = '/360-08.png';
+                (e.currentTarget as HTMLImageElement).src = '/classe360_logo.png';
               }}
             />
           </div>

@@ -100,6 +100,13 @@ const parseEntregaResposta = (value?: string) => {
   }
 };
 
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
 const AtividadeRealizar: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -197,6 +204,11 @@ const AtividadeRealizar: React.FC = () => {
   const modoConsulta = Boolean(entregaExistente);
   const dataEntrega = atividade?.data ?? atividade?.entrega ?? '';
   const horarioEntrega = atividade?.horario ?? '';
+  const instrucoesTexto = atividade?.instrucoes?.trim() ?? '';
+  const descricaoTexto = atividade?.descricao?.trim() ?? '';
+  const exibirInstrucoes = Boolean(instrucoesTexto);
+  const exibirDescricao =
+    Boolean(descricaoTexto) && normalizeText(descricaoTexto) !== normalizeText(instrucoesTexto);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -320,14 +332,20 @@ const AtividadeRealizar: React.FC = () => {
             <CardTitle className="text-lg">{atividade.titulo}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {atividade.instrucoes && (
+            {exibirInstrucoes && (
               <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-                {atividade.instrucoes}
+                {instrucoesTexto}
               </div>
             )}
-            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-              {atividade.descricao || 'Sem enunciado informado.'}
-            </div>
+            {exibirDescricao ? (
+              <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                {descricaoTexto}
+              </div>
+            ) : !exibirInstrucoes ? (
+              <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                Sem enunciado informado.
+              </div>
+            ) : null}
             {atividade.questoes && atividade.questoes.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-foreground">Questões</h3>

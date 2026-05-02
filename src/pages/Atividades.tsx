@@ -222,6 +222,8 @@ const Atividades: React.FC = () => {
   const [searchParams] = useSearchParams();
   const disciplinaInicial = searchParams.get('disciplina') ?? 'todas';
   const isAluno = user?.perfil === UserProfile.ALUNO;
+  const isGestorOuAdmin =
+    user?.perfil === UserProfile.GESTOR || user?.perfil === UserProfile.ADMINISTRADOR;
   const isProfessor =
     user?.perfil === UserProfile.PROFESSOR ||
     String((user as { role?: unknown } | null)?.role ?? '')
@@ -266,6 +268,7 @@ const Atividades: React.FC = () => {
     status: 'Pendente',
   });
   const [disciplinaSelecionada, setDisciplinaSelecionada] = useState(disciplinaInicial);
+  const [professorSelecionado, setProfessorSelecionado] = useState('todos');
 
   const refreshFromApi = () => {
     if (!isApiEnabled()) return Promise.resolve();
@@ -446,6 +449,20 @@ const Atividades: React.FC = () => {
     () => turmasDisponiveis.map((item) => item.nome),
     [turmasDisponiveis],
   );
+  const professorNomeById = useMemo(() => {
+    const map = new Map<string, string>();
+    usuariosLista
+      .filter((item) => item.perfil === UserProfile.PROFESSOR)
+      .forEach((item) => map.set(String(item.id), item.nome ?? ''));
+    return map;
+  }, [usuariosLista]);
+  const getProfessorNomeAtividade = (atividade: Atividade) => {
+    const nome = atividade.professorNome?.trim();
+    if (nome) return nome;
+    const porId = professorNomeById.get(String(atividade.professorId ?? ''))?.trim();
+    if (porId) return porId;
+    return 'Sem professor';
+  };
 
   const buildAtividadeApiPayload = (a: Atividade): AtividadeApi => {
     const turmaId = turmasDisponiveis.find((t) => t.nome === a.turma)?.id;
@@ -550,11 +567,31 @@ const Atividades: React.FC = () => {
     const usadas = new Set(atividadesVisiveis.map((a) => a.disciplina));
     return disciplinaOptions.filter((d) => usadas.has(d));
   }, [isAluno, disciplinaOptions, atividadesVisiveis]);
+  const professoresFiltro = useMemo(
+    () =>
+      Array.from(new Set(atividadesVisiveis.map((item) => getProfessorNomeAtividade(item)))).sort((a, b) =>
+        a.localeCompare(b, 'pt-BR'),
+      ),
+    [atividadesVisiveis, professorNomeById],
+  );
 
   const atividadesFiltradas = useMemo(() => {
-    if (disciplinaSelecionada === 'todas') return atividadesVisiveis;
-    return atividadesVisiveis.filter((item) => item.disciplina === disciplinaSelecionada);
-  }, [atividadesVisiveis, disciplinaSelecionada]);
+    return atividadesVisiveis.filter((item) => {
+      if (disciplinaSelecionada !== 'todas' && item.disciplina !== disciplinaSelecionada) return false;
+      if (isGestorOuAdmin) {
+        const professorNome = getProfessorNomeAtividade(item);
+        if (professorSelecionado === 'sem-professor') return professorNome === 'Sem professor';
+        if (professorSelecionado !== 'todos' && professorNome !== professorSelecionado) return false;
+      }
+      return true;
+    });
+  }, [
+    atividadesVisiveis,
+    disciplinaSelecionada,
+    isGestorOuAdmin,
+    professorSelecionado,
+    professorNomeById,
+  ]);
 
   const getEntrega = (atividadeId: string) =>
     entregas.find((item) => item.atividadeId === atividadeId && item.alunoId === user?.id);
@@ -995,6 +1032,29 @@ const Atividades: React.FC = () => {
               </SelectContent>
             </Select>
           </div>
+          {isGestorOuAdmin && (
+            <div className="min-w-[220px]">
+              <Label htmlFor="filtro-professor" className="text-xs text-muted-foreground">
+                Filtrar por professor
+              </Label>
+              <Select value={professorSelecionado} onValueChange={setProfessorSelecionado}>
+                <SelectTrigger id="filtro-professor">
+                  <SelectValue placeholder="Todos os professores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os professores</SelectItem>
+                  {professoresFiltro.map((professor) => (
+                    <SelectItem
+                      key={professor}
+                      value={professor === 'Sem professor' ? 'sem-professor' : professor}
+                    >
+                      {professor}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         {atividadesFiltradas.length === 0 ? (

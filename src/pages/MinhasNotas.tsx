@@ -317,10 +317,14 @@ const MinhasNotas: React.FC = () => {
       const g = gruposNotaProva.get(chaveGrupoProva(n.disciplina, n.turma, n.bimestre));
       let provasNota =
         typeof n.provasNota === 'number' ? n.provasNota : g?.mediaProvas ?? null;
-      const trabalhosNota = typeof n.trabalhosNota === 'number' ? n.trabalhosNota : null;
+      let trabalhosNota = typeof n.trabalhosNota === 'number' ? n.trabalhosNota : null;
       if (provasNota == null && typeof n.nota === 'number' && typeof trabalhosNota === 'number') {
         const infer = Math.round((2 * n.nota - trabalhosNota) * 10) / 10;
         if (infer >= 0 && infer <= 10 && !Number.isNaN(infer)) provasNota = infer;
+      }
+      if (trabalhosNota == null && typeof n.nota === 'number' && typeof provasNota === 'number') {
+        const infer = Math.round((2 * n.nota - provasNota) * 10) / 10;
+        if (infer >= 0 && infer <= 10 && !Number.isNaN(infer)) trabalhosNota = infer;
       }
 
       const media =

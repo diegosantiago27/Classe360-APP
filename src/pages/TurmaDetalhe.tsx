@@ -34,6 +34,7 @@ const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 const getSerieNumero = (nomeTurma: string) => nomeTurma.match(/(\d+)/)?.[1] ?? '';
 
 const apenasDigitos = (value: string) => value.replace(/\D/g, '');
+const cpfOculto = '***.***.***-**';
 
 /** Busca por nome (parcial) ou CPF (com ou sem pontuação). */
 function alunoCombinaComBusca(nome: string, cpf: string | undefined, termoBruto: string): boolean {
@@ -237,11 +238,16 @@ const TurmaDetalhe: React.FC = () => {
 
     return Array.from(unicos.values()).sort((a, b) => a.nome.localeCompare(b.nome));
   }, [turma, usuarios, vinculos]);
+  const ehAlunoLogado = user?.perfil === UserProfile.ALUNO;
+  const podeVerCpfCompleto = (alunoId: string) => !ehAlunoLogado || String(user?.id ?? '') === String(alunoId);
   const alunosFiltrados = useMemo(() => {
     const termo = buscaAluno.trim();
     if (!termo) return alunosDaTurma;
+    if (ehAlunoLogado) {
+      return alunosDaTurma.filter((aluno) => aluno.nome.toLowerCase().includes(termo.toLowerCase()));
+    }
     return alunosDaTurma.filter((aluno) => alunoCombinaComBusca(aluno.nome, aluno.cpf, termo));
-  }, [alunosDaTurma, buscaAluno]);
+  }, [alunosDaTurma, buscaAluno, ehAlunoLogado]);
   const podeGerenciarAlunos =
     user?.perfil === UserProfile.ADMINISTRADOR ||
     user?.perfil === UserProfile.GESTOR ||
@@ -579,7 +585,7 @@ const TurmaDetalhe: React.FC = () => {
               <Input
                 value={buscaAluno}
                 onChange={(event) => setBuscaAluno(event.target.value)}
-                placeholder="Buscar por nome ou CPF"
+                placeholder={ehAlunoLogado ? 'Buscar por nome' : 'Buscar por nome ou CPF'}
               />
             </div>
             {alunosDaTurma.length === 0 ? (
@@ -599,7 +605,7 @@ const TurmaDetalhe: React.FC = () => {
                   {alunosFiltrados.map((aluno) => (
                     <TableRow key={aluno.id}>
                       <TableCell className="font-medium">{aluno.nome}</TableCell>
-                      <TableCell>{aluno.cpf}</TableCell>
+                      <TableCell>{podeVerCpfCompleto(aluno.id) ? aluno.cpf : cpfOculto}</TableCell>
                       {podeGerenciarAlunos && (
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">

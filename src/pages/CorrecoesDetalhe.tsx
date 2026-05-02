@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { useToast } from '@/hooks/use-toast';
 import { defaultUsers, StoredUser, usersStorageKey } from '@/lib/mockUsers';
 import { loadFromStorage, saveToStorage } from '@/lib/mockStorage';
 import { defaultInstituicao, instituicaoStorageKey } from '@/lib/mockInstituicao';
@@ -262,6 +263,7 @@ export default function CorrecoesDetalhe() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const state = location.state as
     | {
         alunosIds?: string[];
@@ -583,7 +585,10 @@ export default function CorrecoesDetalhe() {
           ...mapped,
           feedbackProfessor: draftProva.feedback.trim() || mapped.feedbackProfessor,
         });
-        window.alert('Correção registrada.');
+        toast({
+          title: 'Salvo com sucesso',
+          description: 'A correção da prova foi registrada.',
+        });
         navigate('/correcoes', { state: { listFilters: listFiltersRetorno } });
         return;
       } catch {
@@ -616,7 +621,10 @@ export default function CorrecoesDetalhe() {
     );
     saveToStorage(provasRespostasStorageKey, next);
     setRespostaAlvo(next[idx]!);
-    window.alert('Correção salva localmente.');
+    toast({
+      title: 'Salvo com sucesso',
+      description: 'A correção da prova foi salva localmente.',
+    });
     navigate('/correcoes', { state: { listFilters: listFiltersRetorno } });
   };
 
@@ -664,9 +672,17 @@ export default function CorrecoesDetalhe() {
           corrigido: true,
         }).catch(() => null);
       }
+      toast({
+        title: 'Salvo com sucesso',
+        description: 'A correção da atividade foi registrada.',
+      });
       return;
     }
     saveToStorage(entregasStorageKey, updated);
+    toast({
+      title: 'Salvo com sucesso',
+      description: 'A correção da atividade foi salva localmente.',
+    });
   };
 
   return (

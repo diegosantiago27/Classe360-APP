@@ -23,7 +23,14 @@ import {
   listNotasRelacionalResumo,
   patchNotaRelacional,
 } from '@/lib/notasRelApi';
-import { isApiEnabled } from '@/lib/entityCrudApi';
+import {
+  isApiEnabled,
+  listAtividadesApi,
+  listDisciplinasApi,
+  listEntregasAtividadesApi,
+  listTurmasApi,
+  listUsuariosApi,
+} from '@/lib/entityCrudApi';
 import { loadVinculosDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 interface Lancamento {
@@ -70,13 +77,34 @@ interface AtividadeEntrega {
   alunoId: string;
   alunoNome: string;
   disciplina: string;
+  turma?: string;
+  periodo?: string;
   nota?: number | null;
 }
+
+interface AtividadeCatalogo {
+  id: string;
+  turma?: string;
+  disciplina?: string;
+  periodo?: string;
+  descricao?: string;
+}
+
+const parsePeriodoFromDescricao = (descricao?: string) => {
+  if (!descricao?.trim()) return '';
+  try {
+    const parsed = JSON.parse(descricao) as { periodo?: string };
+    return parsed?.periodo?.trim() ?? '';
+  } catch {
+    return '';
+  }
+};
 
 const lancamentosStorageKey = 'school-compass:notas';
 const notasAlunosStorageKey = 'school-compass:notas-alunos';
 const provasRespostasStorageKey = 'school-compass:provas-respostas';
 const provasStorageKey = 'school-compass:provas';
+const atividadesStorageKey = 'school-compass:atividades';
 const atividadesEntregasStorageKey = 'school-compass:atividades-entregas';
 const vinculosStorageKey = 'school-compass:disciplinas-vinculos';
 
@@ -112,6 +140,20 @@ const bimestreCompativel = (periodoProva: string | undefined, bimestreLancamento
   if (!p) return true;
   return p === b;
 };
+const round1 = (value: number) => Math.round(value * 10) / 10;
+const asNota = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return round1(value);
+};
+const notasIguais = (a: number | null | undefined, b: number | null | undefined) =>
+  (a == null ? null : round1(a)) === (b == null ? null : round1(b));
+const mesmoLancamento = (
+  nota: Pick<NotaAluno, 'turma' | 'disciplina' | 'bimestre'>,
+  lancamento: Pick<Lancamento, 'turma' | 'disciplina' | 'bimestre'>,
+) =>
+  normalizeText(nota.turma) === normalizeText(lancamento.turma) &&
+  normalizeText(nota.disciplina) === normalizeText(lancamento.disciplina) &&
+  bimestreCompativel(nota.bimestre, lancamento.bimestre);
 
 const NotaTurma: React.FC = () => {
   const { user } = useAuth();
@@ -181,6 +223,7 @@ const NotaTurma: React.FC = () => {
   );
   const [storageTick, setStorageTick] = useState(0);
   const [respostasProvasRel, setRespostasProvasRel] = useState<ProvaResposta[]>([]);
+  const [entregasAtividadesApi, setEntregasAtividadesApi] = useState<AtividadeEntrega[]>([]);
   const [carregandoNotasRel, setCarregandoNotasRel] = useState(false);
 
   useEffect(() => {
@@ -188,6 +231,7 @@ const NotaTurma: React.FC = () => {
       notasAlunosStorageKey,
       provasRespostasStorageKey,
       provasStorageKey,
+      atividadesStorageKey,
       atividadesEntregasStorageKey,
       usersStorageKey,
       turmasStorageKey,
@@ -216,14 +260,50 @@ const NotaTurma: React.FC = () => {
       setRespostasProvasRel([]);
       return;
     }
-    void Promise.all([
-      listRespostasRelacionalParaProfessor(user.id),
-      listProvasRelacionalParaProfessor(user.id),
-    ])
+    const carregarRespostas = async () => {
+      const ehProfessor = user.perfil === UserProfile.PROFESSOR;
+      if (ehProfessor) {
+        return Promise.all([
+          listRespostasRelacionalParaProfessor(user.id),
+          listProvasRelacionalParaProfessor(user.id),
+        ]);
+      }
+      const usuarios = await listUsuariosApi();
+      const professoresIds = Array.from(
+        new Set(
+          usuarios
+            .filter((u) => String(u.role ?? '').toUpperCase().includes('PROFESSOR'))
+            .map((u) => String(u.id ?? '').trim())
+            .filter((id) => id.length > 0),
+        ),
+      );
+      if (professoresIds.length === 0) return [[], []] as const;
+      const lotes = await Promise.all(
+        professoresIds.map(async (professorId) => {
+          const [respostas, provas] = await Promise.all([
+            listRespostasRelacionalParaProfessor(professorId).catch(() => []),
+            listProvasRelacionalParaProfessor(professorId).catch(() => []),
+          ]);
+          return { respostas, provas };
+        }),
+      );
+      return [
+        lotes.flatMap((lote) => lote.respostas),
+        lotes.flatMap((lote) => lote.provas),
+      ] as const;
+    };
+    void carregarRespostas()
       .then(([respostas, provas]) => {
         const periodoPorProva = new Map<string, string>();
+        const turmaPorProva = new Map<string, string>();
+        const disciplinaPorProva = new Map<string, string>();
         provas.forEach((p) => {
-          if (p.id != null) periodoPorProva.set(String(p.id), p.periodo ?? '');
+          if (p.id != null) {
+            const provaId = String(p.id);
+            periodoPorProva.set(provaId, p.periodo ?? '');
+            turmaPorProva.set(provaId, p.turmaNome ?? '');
+            disciplinaPorProva.set(provaId, p.disciplinaNome ?? '');
+          }
         });
         setRespostasProvasRel(
           respostas.map((r) => {
@@ -236,8 +316,8 @@ const NotaTurma: React.FC = () => {
               provaId: String(r.provaId),
               alunoId: String(r.alunoId),
               alunoNome: r.alunoNome ?? '',
-              turma: r.turma ?? '',
-              disciplina: r.disciplina ?? '',
+              turma: r.turma ?? turmaPorProva.get(String(r.provaId)) ?? '',
+              disciplina: r.disciplina ?? disciplinaPorProva.get(String(r.provaId)) ?? '',
               status: corrigido ? 'Corrigido' : 'Enviado',
               notaFinal: r.notaFinal ?? null,
               periodo: periodoPorProva.get(String(r.provaId)) ?? '',
@@ -246,7 +326,59 @@ const NotaTurma: React.FC = () => {
         );
       })
       .catch(() => setRespostasProvasRel([]));
-  }, [user?.id]);
+  }, [user?.id, user?.perfil]);
+
+  useEffect(() => {
+    if (!isApiEnabled()) {
+      setEntregasAtividadesApi([]);
+      return;
+    }
+    let cancelado = false;
+    void Promise.all([listEntregasAtividadesApi(), listAtividadesApi(), listTurmasApi(), listDisciplinasApi()])
+      .then(([entregas, atividades, turmasApi, disciplinasApi]) => {
+        if (cancelado) return;
+        const turmaNomeById = new Map(
+          turmasApi.map((t) => [String(t.id ?? ''), (t.nome ?? `Turma ${t.id ?? ''}`).trim()]),
+        );
+        const disciplinaNomeById = new Map(
+          disciplinasApi.map((d) => [String(d.id ?? ''), (d.nome ?? `Disciplina ${d.id ?? ''}`).trim()]),
+        );
+        const atividadeById = new Map(
+          atividades.map((a) => {
+            const metaPeriodo = parsePeriodoFromDescricao(a.descricao);
+            return [
+              String(a.id ?? ''),
+              {
+                turma: turmaNomeById.get(String(a.turmaId ?? '')) ?? '',
+                disciplina: disciplinaNomeById.get(String(a.disciplinaId ?? '')) ?? '',
+                periodo: metaPeriodo,
+              },
+            ] as const;
+          }),
+        );
+        const mapped: AtividadeEntrega[] = entregas.map((e) => {
+          const meta = atividadeById.get(String(e.atividadeId ?? ''));
+          return {
+            id: String(e.id ?? ''),
+            atividadeId: String(e.atividadeId ?? ''),
+            alunoId: String(e.alunoId ?? ''),
+            alunoNome: '',
+            disciplina: meta?.disciplina ?? '',
+            turma: meta?.turma ?? '',
+            periodo: meta?.periodo ?? '',
+            nota: e.nota ?? null,
+          };
+        });
+        setEntregasAtividadesApi(mapped);
+      })
+      .catch(() => {
+        if (cancelado) return;
+        setEntregasAtividadesApi([]);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [storageTick]);
 
   useEffect(() => {
     if (!lancamentoAtual || !isNotasRelacionalEnabled()) return;
@@ -299,10 +431,25 @@ const NotaTurma: React.FC = () => {
     () => loadFromStorage<Array<{ id: string; periodo?: string }>>(provasStorageKey, []),
     [storageTick],
   );
+  const atividadesCatalogo = useMemo(
+    () => loadFromStorage<AtividadeCatalogo[]>(atividadesStorageKey, []),
+    [storageTick],
+  );
   const periodoPorProvaIdLocal = useMemo(
     () => new Map(provasCatalogo.map((p) => [p.id, p.periodo ?? ''])),
     [provasCatalogo],
   );
+  const atividadeMetaPorId = useMemo(() => {
+    const map = new Map<string, { turma: string; disciplina: string; periodo: string }>();
+    atividadesCatalogo.forEach((a) => {
+      map.set(String(a.id), {
+        turma: a.turma ?? '',
+        disciplina: a.disciplina ?? '',
+        periodo: a.periodo ?? parsePeriodoFromDescricao(a.descricao),
+      });
+    });
+    return map;
+  }, [atividadesCatalogo]);
 
   const respostasProvas = useMemo(() => {
     const byKey = new Map<string, ProvaResposta>();
@@ -316,9 +463,13 @@ const NotaTurma: React.FC = () => {
     return Array.from(byKey.values());
   }, [respostasProvasLocal, respostasProvasRel, periodoPorProvaIdLocal]);
 
-  const entregasAtividades = useMemo(
+  const entregasAtividadesLocal = useMemo(
     () => loadFromStorage<AtividadeEntrega[]>(atividadesEntregasStorageKey, []),
     [storageTick],
+  );
+  const entregasAtividades = useMemo(
+    () => (isApiEnabled() ? entregasAtividadesApi : entregasAtividadesLocal),
+    [entregasAtividadesApi, entregasAtividadesLocal],
   );
 
   const alunosTurmaAtual = useMemo(() => {
@@ -353,8 +504,25 @@ const NotaTurma: React.FC = () => {
         };
       });
 
+    const alunosPorProvaCorrigida = respostasProvas
+      .filter((resposta) => {
+        const mesmaTurma = getTurmaKey(resposta.turma) === turmaKey;
+        const mesmaDisciplina =
+          normalizeText(resposta.disciplina) === normalizeText(lancamentoAtual.disciplina);
+        const mesmoBimestre = bimestreCompativel(resposta.periodo, lancamentoAtual.bimestre);
+        return mesmaTurma && mesmaDisciplina && mesmoBimestre;
+      })
+      .map((resposta) => {
+        const usuario = usuarios.find((u) => u.id === resposta.alunoId);
+        return {
+          id: resposta.alunoId,
+          nome: usuario?.nome ?? resposta.alunoNome ?? `Aluno ${resposta.alunoId}`,
+          turma: lancamentoAtual.turma,
+        };
+      });
+
     const unicos = new Map<string, AlunoTurma>();
-    [...alunosPorCadastro, ...alunosPorVinculo].forEach((aluno) => {
+    [...alunosPorCadastro, ...alunosPorVinculo, ...alunosPorProvaCorrigida].forEach((aluno) => {
       if (!unicos.has(aluno.id)) {
         unicos.set(aluno.id, aluno);
       }
@@ -363,15 +531,12 @@ const NotaTurma: React.FC = () => {
     return Array.from(unicos.values()).sort((a, b) =>
       a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }),
     );
-  }, [lancamentoAtual, turmas, usuarios, vinculos]);
+  }, [lancamentoAtual, turmas, usuarios, vinculos, respostasProvas]);
 
   const notasDaTurma = useMemo(() => {
     if (!lancamentoAtual) return [];
     return notasAlunos.filter(
-      (nota) =>
-        nota.turma === lancamentoAtual.turma &&
-        nota.disciplina === lancamentoAtual.disciplina &&
-        nota.bimestre === lancamentoAtual.bimestre,
+      (nota) => mesmoLancamento(nota, lancamentoAtual),
     );
   }, [lancamentoAtual, notasAlunos]);
 
@@ -446,10 +611,17 @@ const NotaTurma: React.FC = () => {
         bimestreCompativel(resposta.periodo, bimestre),
     );
     const trabalhosAluno = entregasAtividades.filter(
-      (entrega) =>
-        String(entrega.alunoId) === String(alunoId) &&
-        normalizeText(entrega.disciplina) === normalizeText(disciplina) &&
-        typeof entrega.nota === 'number',
+      (entrega) => {
+        if (String(entrega.alunoId) !== String(alunoId)) return false;
+        if (typeof entrega.nota !== 'number') return false;
+        const atividadeMeta = atividadeMetaPorId.get(String(entrega.atividadeId));
+        const disciplinaEntrega = entrega.disciplina || atividadeMeta?.disciplina || '';
+        const turmaEntrega = entrega.turma || atividadeMeta?.turma || '';
+        // Atividade pode ter período textual livre ("Periodo"), então não bloqueamos por bimestre.
+        if (normalizeText(disciplinaEntrega) !== normalizeText(disciplina)) return false;
+        if (turmaEntrega && getTurmaKey(turmaEntrega) !== getTurmaKey(turma)) return false;
+        return true;
+      },
     );
 
     const mediaProvas =
@@ -495,9 +667,7 @@ const NotaTurma: React.FC = () => {
         notasAlunos.find(
           (nota) =>
             nota.alunoId === aluno.alunoId &&
-            nota.turma === lancamentoAtual.turma &&
-            nota.disciplina === lancamentoAtual.disciplina &&
-            nota.bimestre === lancamentoAtual.bimestre,
+            mesmoLancamento(nota, lancamentoAtual),
         ) ?? null;
       const trabalhosExibicao =
         typeof notaAtualBimestre?.trabalhosNota === 'number'
@@ -508,7 +678,11 @@ const NotaTurma: React.FC = () => {
           ? notaAtualBimestre.provasNota
           : mediaProvas;
       const notaExibicao =
-        typeof notaAtualBimestre?.nota === 'number' ? notaAtualBimestre.nota : mediaFinal;
+        typeof mediaFinal === 'number'
+          ? mediaFinal
+          : typeof notaAtualBimestre?.nota === 'number'
+            ? notaAtualBimestre.nota
+            : null;
 
       return {
         ...aluno,
@@ -522,7 +696,52 @@ const NotaTurma: React.FC = () => {
         totalBimestres: typeof notaExibicao === 'number' ? notaExibicao : null,
       };
     });
-  }, [alunosDaTurma, entregasAtividades, lancamentoAtual, notasAlunos, respostasProvas]);
+  }, [alunosDaTurma, atividadeMetaPorId, entregasAtividades, lancamentoAtual, notasAlunos, respostasProvas]);
+
+  useEffect(() => {
+    if (!isNotasRelacionalEnabled() || !lancamentoAtual) return;
+    const pendencias = notasPorAluno.filter((linha) => {
+      const atual = notasAlunos.find(
+        (n) => n.alunoId === linha.alunoId && mesmoLancamento(n, lancamentoAtual),
+      );
+      if (!atual) return false;
+      return (
+        !notasIguais(atual.trabalhosNota ?? null, asNota(linha.trabalhosExibicao)) ||
+        !notasIguais(atual.provasNota ?? null, asNota(linha.provasExibicao)) ||
+        !notasIguais(atual.nota ?? null, asNota(linha.notaExibicao))
+      );
+    });
+    if (pendencias.length === 0) return;
+    void Promise.allSettled(
+      pendencias.map((linha) => {
+        const alunoIdNum = Number(linha.alunoId);
+        return patchNotaRelacional({
+          alunoId: Number.isFinite(alunoIdNum) ? alunoIdNum : undefined,
+          alunoNome: linha.alunoNome,
+          turmaNome: lancamentoAtual.turma,
+          disciplinaNome: lancamentoAtual.disciplina,
+          bimestre: lancamentoAtual.bimestre,
+          trabalhosNota: asNota(linha.trabalhosExibicao),
+          provasNota: asNota(linha.provasExibicao),
+          nota: asNota(linha.notaExibicao),
+        });
+      }),
+    ).then(() => {
+      setNotasAlunos((prev) =>
+        prev.map((n) => {
+          if (n.alunoId === '' || !mesmoLancamento(n, lancamentoAtual)) return n;
+          const linha = pendencias.find((p) => p.alunoId === n.alunoId);
+          if (!linha) return n;
+          return {
+            ...n,
+            trabalhosNota: asNota(linha.trabalhosExibicao),
+            provasNota: asNota(linha.provasExibicao),
+            nota: asNota(linha.notaExibicao),
+          };
+        }),
+      );
+    });
+  }, [lancamentoAtual, notasAlunos, notasPorAluno]);
 
   const handleNotaChange = (alunoId: string, field: 'trabalhosNota' | 'provasNota' | 'nota', rawValue: string) => {
     if (!lancamentoAtual) return;
@@ -535,9 +754,7 @@ const NotaTurma: React.FC = () => {
     const updated = notasAlunos.map((nota) => {
       const isTarget =
         nota.alunoId === alunoId &&
-        nota.turma === lancamentoAtual.turma &&
-        nota.disciplina === lancamentoAtual.disciplina &&
-        nota.bimestre === lancamentoAtual.bimestre;
+        mesmoLancamento(nota, lancamentoAtual);
       return isTarget ? { ...nota, [field]: normalizedValue } : nota;
     });
     setNotasAlunos(updated);
@@ -549,9 +766,7 @@ const NotaTurma: React.FC = () => {
       const row = updated.find(
         (nota) =>
           nota.alunoId === alunoId &&
-          nota.turma === lancamentoAtual.turma &&
-          nota.disciplina === lancamentoAtual.disciplina &&
-          nota.bimestre === lancamentoAtual.bimestre,
+          mesmoLancamento(nota, lancamentoAtual),
       );
       const alunoNome = row?.alunoNome ?? usuarios.find((u) => String(u.id) === String(alunoId))?.nome ?? '';
       const alunoIdNum = Number(alunoId);

@@ -49,6 +49,8 @@ interface ProvaQuestion {
 
 interface Prova {
   id: string;
+  professorId?: string;
+  professorNome?: string;
   titulo: string;
   turma: string;
   disciplina: string;
@@ -65,6 +67,8 @@ interface Prova {
 interface ProvaMeta {
   sala?: string;
   questoes?: ProvaQuestion[];
+  professorId?: string;
+  professorNome?: string;
 }
 
 const parseProvaMeta = (value?: string): ProvaMeta => {
@@ -79,6 +83,13 @@ const parseProvaMeta = (value?: string): ProvaMeta => {
 };
 
 const UNDO_DELETE_MS = 25_000;
+
+const normalizeText = (value?: string) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
 
 function cloneProva(p: Prova): Prova {
   return {
@@ -137,6 +148,8 @@ const defaultProvas: Prova[] = API_URL ? [] : [
 
 const Provas: React.FC = () => {
   const { user } = useAuth();
+  const isGestorOuAdmin =
+    user?.perfil === UserProfile.GESTOR || user?.perfil === UserProfile.ADMINISTRADOR;
   const [provas, setProvas] = useState<Prova[]>(
     () => loadFromStorage<Prova[]>(storageKey, isApiEnabled() ? [] : defaultProvas),
   );
@@ -145,6 +158,8 @@ const Provas: React.FC = () => {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [disciplinaFiltroGestao, setDisciplinaFiltroGestao] = useState('todas');
+  const [professorFiltroGestao, setProfessorFiltroGestao] = useState('todos');
   const [draft, setDraft] = useState<Omit<Prova, 'id'>>({
     titulo: '',
     turma: '',
@@ -213,10 +228,17 @@ const Provas: React.FC = () => {
         }));
         const turmaNomeById = new Map(turmasMapped.map((t) => [String(t.id), t.nome]));
         const disciplinaNomeById = new Map(disciplinasMapped.map((d) => [String(d.id), d.nome]));
+        const usuarioNomeById = new Map(usuariosMapped.map((u) => [u.id, u.nome]));
         const provasMapped: Prova[] = provasApi.map((p) => {
           const meta = parseProvaMeta(p.descricao);
+          const professorId =
+            p.professorId !== null && p.professorId !== undefined
+              ? String(p.professorId)
+              : (meta.professorId ?? '');
           return {
             id: String(p.id ?? createId('prova')),
+            professorId,
+            professorNome: meta.professorNome ?? usuarioNomeById.get(professorId) ?? '',
             titulo: p.titulo ?? '',
             turma: turmaNomeById.get(String(p.turmaId ?? '')) ?? `Turma ${p.turmaId ?? ''}`,
             disciplina:
@@ -281,10 +303,6 @@ const Provas: React.FC = () => {
       undoTimerRef.current = null;
     }, UNDO_DELETE_MS);
   };
-  const totalAgendadas = useMemo(
-    () => provas.filter((prova) => prova.status === 'Agendada').length,
-    [provas],
-  );
   const turmasDisponiveis = useMemo(
     () => loadFromStorage<Turma[]>(turmasStorageKey, isApiEnabled() ? [] : defaultTurmas),
     [storageTick],
@@ -332,6 +350,64 @@ const Provas: React.FC = () => {
   const hasTurmas = turmaOptions.length > 0;
   const hasDisciplinas = disciplinaOptions.length > 0;
   const hasPeriodos = periodoOptions.length > 0;
+  const professorNomeById = useMemo(() => {
+    const map = new Map<string, string>();
+    usuariosCadastrados
+      .filter((item) => item.perfil === UserProfile.PROFESSOR)
+      .forEach((item) => map.set(String(item.id), item.nome ?? ''));
+    return map;
+  }, [usuariosCadastrados]);
+  const getProfessorNomeDaProva = (prova: Prova) => {
+    const nome = prova.professorNome?.trim();
+    if (nome) return nome;
+    const porId = professorNomeById.get(String(prova.professorId ?? ''))?.trim();
+    if (porId) return porId;
+    return 'Sem professor';
+  };
+  const provasVisiveis = useMemo(() => {
+    const professorLogadoId = String(user?.id ?? '').trim();
+    const professorLogadoNome = normalizeText(user?.nome);
+    if (user?.perfil !== UserProfile.PROFESSOR || !professorLogadoId) {
+      return provas;
+    }
+    return provas.filter((item) => {
+      const professorIdProva = String(item.professorId ?? '').trim();
+      if (professorIdProva) return professorIdProva === professorLogadoId;
+      return professorLogadoNome.length > 0 && normalizeText(item.professorNome) === professorLogadoNome;
+    });
+  }, [provas, user?.id, user?.nome, user?.perfil]);
+  const disciplinasFiltroGestao = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          provasVisiveis
+            .map((item) => item.disciplina?.trim() ?? '')
+            .filter((item) => item.length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [provasVisiveis],
+  );
+  const professoresFiltroGestao = useMemo(
+    () =>
+      Array.from(new Set(provasVisiveis.map((item) => getProfessorNomeDaProva(item)))).sort((a, b) =>
+        a.localeCompare(b, 'pt-BR'),
+      ),
+    [provasVisiveis, professorNomeById],
+  );
+  const provasFiltradas = useMemo(() => {
+    if (!isGestorOuAdmin) return provasVisiveis;
+    return provasVisiveis.filter((item) => {
+      if (disciplinaFiltroGestao !== 'todas' && item.disciplina !== disciplinaFiltroGestao) return false;
+      const professorNome = getProfessorNomeDaProva(item);
+      if (professorFiltroGestao === 'sem-professor') return professorNome === 'Sem professor';
+      if (professorFiltroGestao !== 'todos' && professorNome !== professorFiltroGestao) return false;
+      return true;
+    });
+  }, [provasVisiveis, isGestorOuAdmin, disciplinaFiltroGestao, professorFiltroGestao, professorNomeById]);
+  const totalAgendadas = useMemo(
+    () => provasFiltradas.filter((prova) => prova.status === 'Agendada').length,
+    [provasFiltradas],
+  );
 
   const buildProvaApiPayload = (prova: Prova): ProvaApi => {
     const turmaId = turmasDisponiveis.find((t) => t.nome === prova.turma)?.id;
@@ -342,7 +418,12 @@ const Provas: React.FC = () => {
     return {
       id: undefined,
       titulo: prova.titulo,
-      descricao: JSON.stringify({ sala: prova.sala, questoes: prova.questoes ?? [] }),
+      descricao: JSON.stringify({
+        sala: prova.sala,
+        questoes: prova.questoes ?? [],
+        professorId: prova.professorId ?? user?.id ?? '',
+        professorNome: prova.professorNome ?? user?.nome ?? '',
+      }),
       turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
       disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
       professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
@@ -482,7 +563,12 @@ const Provas: React.FC = () => {
       const provaPayload = {
         id: Number.isFinite(editingIdNum) ? editingIdNum : undefined,
         titulo: draft.titulo,
-        descricao: JSON.stringify({ sala: draft.sala, questoes: draft.questoes ?? [] }),
+        descricao: JSON.stringify({
+          sala: draft.sala,
+          questoes: draft.questoes ?? [],
+          professorId: user?.id ?? '',
+          professorNome: user?.nome ?? '',
+        }),
         turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
         disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
         professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
@@ -503,12 +589,27 @@ const Provas: React.FC = () => {
 
     if (editingId) {
       const updated = provas.map((prova) =>
-        prova.id === editingId ? { ...prova, ...draft } : prova,
+        prova.id === editingId
+          ? {
+              ...prova,
+              ...draft,
+              professorId: user?.id ?? prova.professorId ?? '',
+              professorNome: user?.nome ?? prova.professorNome ?? '',
+            }
+          : prova,
       );
       setProvas(updated);
       saveToStorage(storageKey, updated);
     } else {
-      const newProvas = [...provas, { id: createId('prova'), ...draft }];
+      const newProvas = [
+        ...provas,
+        {
+          id: createId('prova'),
+          professorId: user?.id ?? '',
+          professorNome: user?.nome ?? '',
+          ...draft,
+        },
+      ];
       setProvas(newProvas);
       saveToStorage(storageKey, newProvas);
     }
@@ -674,7 +775,12 @@ const Provas: React.FC = () => {
       const payload = {
         id: Number.isFinite(provaIdNum) ? provaIdNum : undefined,
         titulo: alvo.titulo,
-        descricao: JSON.stringify({ sala: alvo.sala, questoes: alvo.questoes ?? [] }),
+        descricao: JSON.stringify({
+          sala: alvo.sala,
+          questoes: alvo.questoes ?? [],
+          professorId: alvo.professorId ?? user?.id ?? '',
+          professorNome: alvo.professorNome ?? user?.nome ?? '',
+        }),
         turmaId: Number.isFinite(turmaIdNum) ? turmaIdNum : null,
         disciplinaId: Number.isFinite(disciplinaIdNum) ? disciplinaIdNum : null,
         professorId: Number.isFinite(professorIdNum) ? professorIdNum : null,
@@ -729,6 +835,49 @@ const Provas: React.FC = () => {
             </Link>
           </Button>
         </div>
+        {isGestorOuAdmin && (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label htmlFor="filtro-provas-disciplina" className="text-xs text-muted-foreground">
+                Filtrar por materia
+              </Label>
+              <Select value={disciplinaFiltroGestao} onValueChange={setDisciplinaFiltroGestao}>
+                <SelectTrigger id="filtro-provas-disciplina">
+                  <SelectValue placeholder="Todas as materias" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas as materias</SelectItem>
+                  {disciplinasFiltroGestao.map((disciplina) => (
+                    <SelectItem key={disciplina} value={disciplina}>
+                      {disciplina}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="filtro-provas-professor" className="text-xs text-muted-foreground">
+                Filtrar por professor
+              </Label>
+              <Select value={professorFiltroGestao} onValueChange={setProfessorFiltroGestao}>
+                <SelectTrigger id="filtro-provas-professor">
+                  <SelectValue placeholder="Todos os professores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os professores</SelectItem>
+                  {professoresFiltroGestao.map((professor) => (
+                    <SelectItem
+                      key={professor}
+                      value={professor === 'Sem professor' ? 'sem-professor' : professor}
+                    >
+                      {professor}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Card>
@@ -751,7 +900,7 @@ const Provas: React.FC = () => {
                   Total de provas
                 </CardTitle>
                 <div className="text-2xl font-semibold text-foreground">
-                  {provas.length}
+                  {provasFiltradas.length}
                 </div>
               </div>
               <FileText className="w-5 h-5 text-accent" />
@@ -764,7 +913,7 @@ const Provas: React.FC = () => {
                   Rascunhos
                 </CardTitle>
                 <div className="text-2xl font-semibold text-foreground">
-                  {provas.filter((prova) => prova.status === 'Rascunho').length}
+                  {provasFiltradas.filter((prova) => prova.status === 'Rascunho').length}
                 </div>
               </div>
               <FileText className="w-5 h-5 text-warning" />
@@ -772,13 +921,13 @@ const Provas: React.FC = () => {
           </Card>
         </div>
 
-        {provas.length === 0 ? (
+        {provasFiltradas.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
             Nenhuma prova cadastrada. Clique em "Criar prova" para adicionar.
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {provas.map((prova) => (
+            {provasFiltradas.map((prova) => (
               <Card key={prova.id} className="card-hover">
                 <CardHeader>
                   <div className="flex items-center justify-between">
