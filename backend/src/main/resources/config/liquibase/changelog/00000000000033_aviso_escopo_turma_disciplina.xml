@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="00000000000033-1" author="classe360">
+        <addColumn tableName="aviso">
+            <column name="disciplina_id" type="bigint"/>
+            <column name="turma_id" type="bigint"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="00000000000033-2" author="classe360">
+        <addForeignKeyConstraint
+            baseTableName="aviso"
+            baseColumnNames="disciplina_id"
+            constraintName="fk_aviso_disciplina"
+            referencedTableName="disciplina"
+            referencedColumnNames="id"/>
+    </changeSet>
+
+    <changeSet id="00000000000033-3" author="classe360">
+        <addForeignKeyConstraint
+            baseTableName="aviso"
+            baseColumnNames="turma_id"
+            constraintName="fk_aviso_turma"
+            referencedTableName="turma"
+            referencedColumnNames="id"/>
+    </changeSet>
+</databaseChangeLog>

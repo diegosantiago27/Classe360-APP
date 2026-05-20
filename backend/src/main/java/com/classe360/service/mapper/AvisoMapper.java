@@ -9,8 +9,12 @@ import org.mapstruct.Mapping;
 public interface AvisoMapper {
 
     @Mapping(source = "criadoPor.id", target = "criadoPorId")
+    @Mapping(source = "disciplina.id", target = "disciplinaId")
+    @Mapping(source = "turma.id", target = "turmaId")
     AvisoDTO toDto(Aviso aviso);
 
     @Mapping(source = "criadoPorId", target = "criadoPor.id")
+    @Mapping(source = "disciplinaId", target = "disciplina.id")
+    @Mapping(source = "turmaId", target = "turma.id")
     Aviso toEntity(AvisoDTO avisoDTO);
 }

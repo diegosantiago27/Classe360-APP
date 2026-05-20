@@ -148,17 +148,6 @@ const PasswordRecovery: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="w-full max-w-lg space-y-6">
-        <div className="flex items-center gap-4">
-          <img
-            src="/360-08.png"
-            alt="Classe 360"
-            className="h-24 sm:h-28 w-auto max-w-full object-contain"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = '/360-08.png';
-            }}
-          />
-        </div>
-
         {step === 1 ? (
           <Card className="animate-fade-in">
             <CardHeader>

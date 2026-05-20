@@ -59,6 +59,8 @@ export interface AvisoApi {
   titulo: string;
   conteudo: string;
   criadoPorId?: number | null;
+  disciplinaId?: number | null;
+  turmaId?: number | null;
   dataCriacao?: string;
 }
 

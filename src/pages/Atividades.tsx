@@ -971,6 +971,69 @@ const Atividades: React.FC = () => {
           )}
         </div>
 
+        {isGestorOuAdmin ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label htmlFor="filtro-atividades-disciplina" className="text-xs text-muted-foreground">
+                Filtrar por materia
+              </Label>
+              <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
+                <SelectTrigger id="filtro-atividades-disciplina">
+                  <SelectValue placeholder="Todas as materias" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas as materias</SelectItem>
+                  {disciplinaOptions.map((disciplina) => (
+                    <SelectItem key={disciplina} value={disciplina}>
+                      {disciplina}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="filtro-atividades-professor" className="text-xs text-muted-foreground">
+                Filtrar por professor
+              </Label>
+              <Select value={professorSelecionado} onValueChange={setProfessorSelecionado}>
+                <SelectTrigger id="filtro-atividades-professor">
+                  <SelectValue placeholder="Todos os professores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os professores</SelectItem>
+                  {professoresFiltro.map((professor) => (
+                    <SelectItem
+                      key={professor}
+                      value={professor === 'Sem professor' ? 'sem-professor' : professor}
+                    >
+                      {professor}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-sm">
+            <Label htmlFor="filtro-atividades-disciplina" className="text-xs text-muted-foreground">
+              Filtrar por materia
+            </Label>
+            <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
+              <SelectTrigger id="filtro-atividades-disciplina">
+                <SelectValue placeholder="Todas as materias" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as materias</SelectItem>
+                {(isAluno ? disciplinaOptionsFiltro : disciplinaOptions).map((disciplina) => (
+                  <SelectItem key={disciplina} value={disciplina}>
+                    {disciplina}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
@@ -1011,50 +1074,6 @@ const Atividades: React.FC = () => {
               <CalendarClock className="w-5 h-5 text-primary" />
             </CardHeader>
           </Card>
-        </div>
-
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-[220px]">
-            <Label htmlFor="filtro-disciplina" className="text-xs text-muted-foreground">
-              Filtrar por materia
-            </Label>
-            <Select value={disciplinaSelecionada} onValueChange={setDisciplinaSelecionada}>
-              <SelectTrigger id="filtro-disciplina">
-                <SelectValue placeholder="Todas as materias" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todas as materias</SelectItem>
-                {(isAluno ? disciplinaOptionsFiltro : disciplinaOptions).map((disciplina) => (
-                  <SelectItem key={disciplina} value={disciplina}>
-                    {disciplina}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {isGestorOuAdmin && (
-            <div className="min-w-[220px]">
-              <Label htmlFor="filtro-professor" className="text-xs text-muted-foreground">
-                Filtrar por professor
-              </Label>
-              <Select value={professorSelecionado} onValueChange={setProfessorSelecionado}>
-                <SelectTrigger id="filtro-professor">
-                  <SelectValue placeholder="Todos os professores" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos os professores</SelectItem>
-                  {professoresFiltro.map((professor) => (
-                    <SelectItem
-                      key={professor}
-                      value={professor === 'Sem professor' ? 'sem-professor' : professor}
-                    >
-                      {professor}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
         </div>
 
         {atividadesFiltradas.length === 0 ? (

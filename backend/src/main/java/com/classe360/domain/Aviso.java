@@ -25,6 +25,14 @@ public class Aviso {
     @ManyToOne(optional = false)
     private Usuario criadoPor;
 
+    @ManyToOne
+    @JoinColumn(name = "disciplina_id")
+    private Disciplina disciplina;
+
+    @ManyToOne
+    @JoinColumn(name = "turma_id")
+    private Turma turma;
+
     @Column(nullable = false)
     private LocalDateTime dataCriacao;
 }

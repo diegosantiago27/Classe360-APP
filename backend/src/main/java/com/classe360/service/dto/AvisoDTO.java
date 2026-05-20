@@ -14,5 +14,7 @@ public class AvisoDTO {
     private String titulo;
     private String conteudo;
     private Long criadoPorId;
+    private Long disciplinaId;
+    private Long turmaId;
     private LocalDateTime dataCriacao;
 }

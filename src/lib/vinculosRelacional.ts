@@ -3,6 +3,7 @@ import { listDisciplinaTurmasApi, type DisciplinaTurmaApi } from '@/lib/entityCr
 /** Formato comum usado nas telas que antes liam `school-compass:disciplinas-vinculos`. */
 export type VinculoDisciplinaTurma = {
   disciplinaId: string;
+  disciplinaNome: string;
   turmaId: string;
   turmaNome: string;
   professorId: string;
@@ -20,6 +21,7 @@ export function mapDisciplinaTurmaApiToVinculo(row: DisciplinaTurmaApi): Vinculo
   if (row.disciplinaId == null || row.turmaId == null) return null;
   return {
     disciplinaId: String(row.disciplinaId),
+    disciplinaNome: row.disciplinaNome ?? '',
     turmaId: String(row.turmaId),
     turmaNome: row.turmaNome ?? '',
     professorId: row.professorId != null ? String(row.professorId) : '',

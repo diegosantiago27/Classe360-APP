@@ -13,7 +13,15 @@ import { useToast } from '@/hooks/use-toast';
 import { createId, loadFromStorage, saveToStorage, syncKeysFromBackend } from '@/lib/mockStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
-import { deleteAvisoApi, isApiEnabled, listAvisosApi, saveAvisoApi } from '@/lib/entityCrudApi';
+import {
+  deleteAvisoApi,
+  isApiEnabled,
+  listAvisosApi,
+  listDisciplinasApi,
+  listTurmasApi,
+  saveAvisoApi,
+} from '@/lib/entityCrudApi';
+import { loadVinculosDisciplinaTurma, type VinculoDisciplinaTurma } from '@/lib/vinculosRelacional';
 
 type AvisoNivel = 'Informativo' | 'Urgente' | 'Lembrete';
 
@@ -23,6 +31,10 @@ interface Aviso {
   descricao: string;
   data: string;
   nivel: AvisoNivel;
+  disciplinaId?: string;
+  disciplinaNome?: string;
+  turmaId?: string;
+  turmaNome?: string;
 }
 
 const LEVEL_PREFIX = /^\[NIVEL:(Informativo|Urgente|Lembrete)\]\s*/;
@@ -69,6 +81,11 @@ const Avisos: React.FC = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const canManage = user?.perfil !== UserProfile.ALUNO;
+  const isProfessor =
+    user?.perfil === UserProfile.PROFESSOR ||
+    String((user as { role?: unknown } | null)?.role ?? '')
+      .trim()
+      .toUpperCase() === 'ROLE_PROFESSOR';
   const [avisosLidos, setAvisosLidos] = useState<Record<string, string[]>>(
     () => loadFromStorage<Record<string, string[]>>(avisosLidosKey, {}),
   );
@@ -80,25 +97,50 @@ const Avisos: React.FC = () => {
   const [titulo, setTitulo] = useState('');
   const [mensagem, setMensagem] = useState('');
   const [nivel, setNivel] = useState<AvisoNivel>('Informativo');
+  const [disciplinaSelecionada, setDisciplinaSelecionada] = useState('');
+  const [turmaSelecionada, setTurmaSelecionada] = useState('');
+  const [vinculosProfessor, setVinculosProfessor] = useState<VinculoDisciplinaTurma[]>([]);
+  const [disciplinaNomeById, setDisciplinaNomeById] = useState<Record<string, string>>({});
+  const [turmaNomeById, setTurmaNomeById] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isApiEnabled()) {
       setLoading(true);
-      void listAvisosApi()
-        .then((items) => {
+      void Promise.all([listAvisosApi(), listDisciplinasApi(), listTurmasApi(), loadVinculosDisciplinaTurma()])
+        .then(([items, disciplinas, turmas, vinculos]) => {
+          const disciplinaMap = Object.fromEntries(
+            disciplinas
+              .filter((d) => d.id != null)
+              .map((d) => [String(d.id), d.nome ?? `Disciplina ${String(d.id)}`]),
+          );
+          const turmaMap = Object.fromEntries(
+            turmas
+              .filter((t) => t.id != null)
+              .map((t) => [String(t.id), t.nome ?? `Turma ${String(t.id)}`]),
+          );
+          setDisciplinaNomeById(disciplinaMap);
+          setTurmaNomeById(turmaMap);
+          setVinculosProfessor(vinculos);
+
           const mapped: Aviso[] = items
             .map((item) => {
               const parsed = decodeConteudo(item.conteudo ?? '');
               const dataFmt = item.dataCriacao
                 ? new Date(item.dataCriacao).toLocaleDateString('pt-BR')
                 : new Date().toLocaleDateString('pt-BR');
+              const disciplinaId = item.disciplinaId != null ? String(item.disciplinaId) : undefined;
+              const turmaId = item.turmaId != null ? String(item.turmaId) : undefined;
               return {
                 id: String(item.id ?? createId('aviso')),
                 titulo: item.titulo ?? '',
                 descricao: parsed.descricao,
                 nivel: parsed.nivel,
                 data: dataFmt,
+                disciplinaId,
+                turmaId,
+                disciplinaNome: disciplinaId ? disciplinaMap[disciplinaId] : undefined,
+                turmaNome: turmaId ? turmaMap[turmaId] : undefined,
               };
             })
             .sort((a, b) => b.data.localeCompare(a.data));
@@ -128,10 +170,42 @@ const Avisos: React.FC = () => {
     [avisos],
   );
 
+  const vinculosDoProfessor = useMemo(() => {
+    if (!isProfessor || !user?.id) return [];
+    const professorId = String(user.id);
+    const mapa = new Map<string, VinculoDisciplinaTurma>();
+    vinculosProfessor
+      .filter((item) => item.professorId === professorId)
+      .forEach((item) => mapa.set(`${item.disciplinaId}:${item.turmaId}`, item));
+    return Array.from(mapa.values());
+  }, [isProfessor, user?.id, vinculosProfessor]);
+
+  const disciplinasProfessor = useMemo(() => {
+    const mapa = new Map<string, string>();
+    vinculosDoProfessor.forEach((item) => {
+      const nome = item.disciplinaNome || disciplinaNomeById[item.disciplinaId] || `Disciplina ${item.disciplinaId}`;
+      mapa.set(item.disciplinaId, nome);
+    });
+    return Array.from(mapa.entries()).map(([id, nome]) => ({ id, nome }));
+  }, [vinculosDoProfessor, disciplinaNomeById]);
+
+  const turmasProfessor = useMemo(() => {
+    const mapa = new Map<string, string>();
+    vinculosDoProfessor
+      .filter((item) => item.disciplinaId === disciplinaSelecionada)
+      .forEach((item) => {
+        const nome = item.turmaNome || turmaNomeById[item.turmaId] || `Turma ${item.turmaId}`;
+        mapa.set(item.turmaId, nome);
+      });
+    return Array.from(mapa.entries()).map(([id, nome]) => ({ id, nome }));
+  }, [vinculosDoProfessor, disciplinaSelecionada, turmaNomeById]);
+
   const resetForm = () => {
     setTitulo('');
     setMensagem('');
     setNivel('Informativo');
+    setDisciplinaSelecionada('');
+    setTurmaSelecionada('');
   };
 
   const handleOpenCreate = () => {
@@ -145,12 +219,22 @@ const Avisos: React.FC = () => {
     setTitulo(aviso.titulo);
     setMensagem(aviso.descricao);
     setNivel(aviso.nivel);
+    setDisciplinaSelecionada(aviso.disciplinaId ?? '');
+    setTurmaSelecionada(aviso.turmaId ?? '');
     setDialogOpen(true);
   };
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     const dataHoje = new Date().toLocaleDateString('pt-BR');
+    if (isProfessor && (!disciplinaSelecionada || !turmaSelecionada)) {
+      toast({
+        title: 'Selecione a disciplina e a turma',
+        description: 'Para professor, o aviso deve ter disciplina e turma de destino.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     if (isApiEnabled()) {
       setLoading(true);
@@ -159,10 +243,22 @@ const Avisos: React.FC = () => {
         titulo,
         conteudo: encodeConteudo(nivel, mensagem),
         criadoPorId: user?.id ? Number(user.id) : undefined,
+        disciplinaId: isProfessor && disciplinaSelecionada ? Number(disciplinaSelecionada) : null,
+        turmaId: isProfessor && turmaSelecionada ? Number(turmaSelecionada) : null,
       };
       void saveAvisoApi(payload)
         .then((saved) => {
           const parsed = decodeConteudo(saved.conteudo ?? payload.conteudo);
+          const disciplinaId = saved.disciplinaId != null
+            ? String(saved.disciplinaId)
+            : isProfessor
+              ? disciplinaSelecionada
+              : undefined;
+          const turmaId = saved.turmaId != null
+            ? String(saved.turmaId)
+            : isProfessor
+              ? turmaSelecionada
+              : undefined;
           const avisoSalvo: Aviso = {
             id: String(saved.id ?? editingId ?? createId('aviso')),
             titulo: saved.titulo ?? titulo,
@@ -171,6 +267,10 @@ const Avisos: React.FC = () => {
             data: saved.dataCriacao
               ? new Date(saved.dataCriacao).toLocaleDateString('pt-BR')
               : dataHoje,
+            disciplinaId,
+            turmaId,
+            disciplinaNome: disciplinaId ? disciplinaNomeById[disciplinaId] : undefined,
+            turmaNome: turmaId ? turmaNomeById[turmaId] : undefined,
           };
           const updated = editingId
             ? avisos.map((aviso) => (aviso.id === editingId ? avisoSalvo : aviso))
@@ -211,6 +311,10 @@ const Avisos: React.FC = () => {
           descricao: mensagem,
           data: dataHoje,
           nivel,
+          disciplinaId: isProfessor ? disciplinaSelecionada : undefined,
+          turmaId: isProfessor ? turmaSelecionada : undefined,
+          disciplinaNome: isProfessor && disciplinaSelecionada ? disciplinaNomeById[disciplinaSelecionada] : undefined,
+          turmaNome: isProfessor && turmaSelecionada ? turmaNomeById[turmaSelecionada] : undefined,
         };
         const updated = [novoAviso, ...avisos];
         setAvisos(updated);
@@ -264,6 +368,20 @@ const Avisos: React.FC = () => {
       saveToStorage(avisosLidosKey, updated);
       return updated;
     });
+  };
+
+  const handleSelecionarDisciplina = (value: string) => {
+    setDisciplinaSelecionada(value);
+    if (!value) {
+      setTurmaSelecionada('');
+      return;
+    }
+    const turmaEhValida = vinculosDoProfessor.some(
+      (item) => item.disciplinaId === value && item.turmaId === turmaSelecionada,
+    );
+    if (!turmaEhValida) {
+      setTurmaSelecionada('');
+    }
   };
 
   return (
@@ -358,6 +476,11 @@ const Avisos: React.FC = () => {
                       </Badge>
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">{aviso.descricao}</p>
+                    {(aviso.disciplinaNome || aviso.turmaNome) && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Destino: {[aviso.disciplinaNome, aviso.turmaNome].filter(Boolean).join(' • ')}
+                      </p>
+                    )}
                     <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                       <span>Publicado em {aviso.data}</span>
                       {canManage ? (
@@ -418,6 +541,44 @@ const Avisos: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
+                  {isProfessor && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="disciplina-aviso">Disciplina</Label>
+                        <Select value={disciplinaSelecionada} onValueChange={handleSelecionarDisciplina}>
+                          <SelectTrigger id="disciplina-aviso">
+                            <SelectValue placeholder="Selecione a disciplina" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {disciplinasProfessor.map((disciplina) => (
+                              <SelectItem key={disciplina.id} value={disciplina.id}>
+                                {disciplina.nome}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="turma-aviso">Turma</Label>
+                        <Select
+                          value={turmaSelecionada}
+                          onValueChange={setTurmaSelecionada}
+                          disabled={!disciplinaSelecionada}
+                        >
+                          <SelectTrigger id="turma-aviso">
+                            <SelectValue placeholder="Selecione a turma" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {turmasProfessor.map((turma) => (
+                              <SelectItem key={turma.id} value={turma.id}>
+                                {turma.nome}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="mensagem">Mensagem</Label>
                     <Textarea
@@ -484,6 +645,44 @@ const Avisos: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
+            {isProfessor && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="disciplina-modal">Disciplina</Label>
+                  <Select value={disciplinaSelecionada} onValueChange={handleSelecionarDisciplina}>
+                    <SelectTrigger id="disciplina-modal">
+                      <SelectValue placeholder="Selecione a disciplina" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {disciplinasProfessor.map((disciplina) => (
+                        <SelectItem key={disciplina.id} value={disciplina.id}>
+                          {disciplina.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="turma-modal">Turma</Label>
+                  <Select
+                    value={turmaSelecionada}
+                    onValueChange={setTurmaSelecionada}
+                    disabled={!disciplinaSelecionada}
+                  >
+                    <SelectTrigger id="turma-modal">
+                      <SelectValue placeholder="Selecione a turma" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {turmasProfessor.map((turma) => (
+                        <SelectItem key={turma.id} value={turma.id}>
+                          {turma.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="mensagem-modal">Mensagem</Label>
               <Textarea
