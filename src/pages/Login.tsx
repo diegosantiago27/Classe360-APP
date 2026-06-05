@@ -51,10 +51,12 @@ const Login: React.FC = () => {
           variant: 'destructive',
         });
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ocorreu um erro ao fazer login.';
+      console.error('Erro ao fazer login:', error);
       toast({
         title: 'Erro',
-        description: 'Ocorreu um erro ao fazer login.',
+        description: message,
         variant: 'destructive',
       });
     } finally {
