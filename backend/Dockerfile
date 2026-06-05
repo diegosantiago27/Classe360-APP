@@ -1,14 +1,24 @@
-# Dockerfile para aplicação Classe360
-FROM eclipse-temurin:21-jdk-alpine
+# Stage 1: build do JAR
+FROM eclipse-temurin:17-jdk-alpine AS build
 
-# Diretório de trabalho
 WORKDIR /app
 
-# Copiar o arquivo JAR para o container
-COPY target/classe360-backend.jar app.jar
+COPY mvnw mvnw.cmd ./
+COPY .mvn .mvn
+COPY pom.xml ./
+RUN chmod +x mvnw
 
-# Expor a porta da aplicação
+COPY src src
+
+RUN ./mvnw -ntp -B -DskipTests -Dmodernizer.skip=true package
+
+# Stage 2: runtime
+FROM eclipse-temurin:17-jre-alpine
+
+WORKDIR /app
+
+COPY --from=build /app/target/classe-360-*.jar app.jar
+
 EXPOSE 8080
 
-# Comando para executar a aplicação
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "app.jar"]
